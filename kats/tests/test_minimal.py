@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import sys
 import unittest
 
@@ -21,15 +23,8 @@ class TestMinimal(unittest.TestCase):
         try:
             from kats.detectors import prophet_detector
             from kats.models import lstm
-            from kats.models import neural_prophet
 
-            self.assertFalse(
-                (
-                    lstm is not None
-                    and neural_prophet is not None
-                    and prophet_detector is not None
-                )
-            )
+            self.assertFalse((lstm is not None and prophet_detector is not None))
         except ImportError:
             self.assertTrue(True)
 

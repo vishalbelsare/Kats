@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """
 This file implements the Dynamic Time Warping (DTW) ChangePoint detector
 algorithm as a DetectorModel, to provide a common interface.
@@ -20,10 +22,7 @@ from typing import Dict, List, Optional, Sequence, Type
 
 import numpy as np
 import pandas as pd
-from kats.consts import (
-    TimeSeriesData,
-    TimeSeriesChangePoint,
-)
+from kats.consts import TimeSeriesChangePoint, TimeSeriesData
 from kats.detectors.detector import Detector
 
 
@@ -44,6 +43,7 @@ class DTWCPDChangePoint(TimeSeriesChangePoint):
 
     def __init__(
         self,
+        # pyre-fixme[11]: Annotation `Timestamp` is not defined as a type.
         start_time: pd.Timestamp,
         end_time: pd.Timestamp,
         confidence: float,
@@ -74,7 +74,7 @@ class DTWTimeSeriesTooSmallException(Exception):
 
 
 @dataclass
-class DTWSubsequenceMatch(object):
+class DTWSubsequenceMatch:
     matching_ts_name: str
     matching_ts_index: int
     matched_ts_name: str
@@ -112,7 +112,6 @@ class DTWCPDDetector(Detector):
         min_value: float = 1e-9,  # Controls when a value is considered to be zero
         match_against_same_time_series: bool = False,  # Whether to allow historical matches in the same time series.
     ) -> None:
-
         self.data = data
         self.sliding_window_size = sliding_window_size
         self.MIN_TS_VALUE = min_value
@@ -263,7 +262,6 @@ class DTWCPDDetector(Detector):
         # TODO: vectorize
         LB_sum = 0.0
         for ind, i in enumerate(s1):
-
             # Rolling min/max
             lower_bound = min(s2[(ind - w if ind - w >= 0 else 0) : (ind + w)])
             upper_bound = max(s2[(ind - w if ind - w >= 0 else 0) : (ind + w)])

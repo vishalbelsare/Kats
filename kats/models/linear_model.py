@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 # Forecasting with simple linear regression model
 #
 # In the simplest case, the regression model explores a linear relationship
@@ -15,6 +17,7 @@ import logging
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import statsmodels.api as sm
 from kats.consts import Params, TimeSeriesData
@@ -72,16 +75,17 @@ class LinearModel(Model[LinearModelParams]):
         self._X_future: Optional[List[int]] = None
         self.past_length: int = len(data.time)
         self.dates: Optional[pd.DatetimeIndex] = None
-        self.y_fcst: Optional[Union[pd.Series, np.ndarray]] = None
-        self.sdev: Optional[Union[np.ndarray, float]] = None
-        self.y_fcst_lower: Optional[Union[pd.Series, np.ndarray, float]] = None
-        self.y_fcst_upper: Optional[Union[pd.Series, np.ndarray, float]] = None
+        self.y_fcst: Optional[Union[pd.Series, npt.NDArray]] = None
+        self.sdev: Optional[Union[npt.NDArray, float]] = None
+        self.y_fcst_lower: Optional[Union[pd.Series, npt.NDArray, float]] = None
+        self.y_fcst_upper: Optional[Union[pd.Series, npt.NDArray, float]] = None
 
     def fit(self) -> None:
         """fit Linear Model."""
         logging.debug(
-            "Call fit() with parameters: "
-            "alpha:{alpha}".format(alpha=self.params.alpha)
+            "Call fit() with parameters: " "alpha:{alpha}".format(
+                alpha=self.params.alpha
+            )
         )
 
         # prepare X and y for linear model
@@ -93,6 +97,7 @@ class LinearModel(Model[LinearModelParams]):
         self.model = lm.fit()
 
     # pyre-fixme[15]: `predict` overrides method defined in `Model` inconsistently.
+    # pyre-fixme[14]: `predict` overrides method defined in `Model` inconsistently.
     def predict(
         self, steps: int, include_history: bool = False, *args: Any, **kwargs: Any
     ) -> pd.DataFrame:
@@ -107,8 +112,9 @@ class LinearModel(Model[LinearModelParams]):
                 `time`, `fcst`, `fcst_lower`, and `fcst_upper`
         """
         logging.debug(
-            "Call predict() with parameters. "
-            "steps:{steps}, kwargs:{kwargs}".format(steps=steps, kwargs=kwargs)
+            "Call predict() with parameters. " "steps:{steps}, kwargs:{kwargs}".format(
+                steps=steps, kwargs=kwargs
+            )
         )
         # pyre-fixme[16]: `Optional` has no attribute `time`.
         self.freq = kwargs.get("freq", pd.infer_freq(self.data.time))

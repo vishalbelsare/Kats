@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,6 +13,7 @@ from typing import Any, Callable, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from kats.consts import Params, TimeSeriesData
 from kats.models.model import Model
@@ -38,8 +41,8 @@ class HarmonicRegressionParams(Params):
 
 
 class HarmonicRegressionModel(Model[Optional[np.ndarray]]):
-    params: Optional[np.ndarray] = None
-    harms: Optional[np.ndarray] = None
+    params: Optional[npt.NDArray] = None
+    harms: Optional[npt.NDArray] = None
 
     def __init__(self, data: TimeSeriesData, params: HarmonicRegressionParams) -> None:
         super().__init__(data, params)
@@ -65,6 +68,7 @@ class HarmonicRegressionModel(Model[Optional[np.ndarray]]):
         )
 
     # pyre-fixme[15]: `predict` overrides method defined in `Model` inconsistently.
+    # pyre-fixme[14]: `predict` overrides method defined in `Model` inconsistently.
     def predict(
         self, dates: pd.Series, *_args: Optional[Any], **_kwargs: Optional[Any]
     ) -> pd.DataFrame:
@@ -131,7 +135,7 @@ class HarmonicRegressionModel(Model[Optional[np.ndarray]]):
     @staticmethod
     def fourier_series(
         dates: pd.Series, period: float, series_order: int
-    ) -> np.ndarray:
+    ) -> npt.NDArray:
         """Provides Fourier series components with the specified frequency
         and order. The starting time is always the epoch.
         Parameters
@@ -145,7 +149,7 @@ class HarmonicRegressionModel(Model[Optional[np.ndarray]]):
         """
         # convert to days since epoch
         t = (
-            np.array((dates - datetime(1970, 1, 1)).dt.total_seconds().astype(np.float))
+            np.array((dates - datetime(1970, 1, 1)).dt.total_seconds().astype(float))
             / 3600.0
         )
         return np.column_stack(
@@ -158,8 +162,8 @@ class HarmonicRegressionModel(Model[Optional[np.ndarray]]):
 
     @staticmethod
     def make_harm_eval(
-        harmonics: np.ndarray,
-    ) -> Callable[..., np.ndarray]:
+        harmonics: npt.NDArray,
+    ) -> Callable[..., npt.NDArray]:
         """Defines evaluation function for the optimizer
         Parameters
         ----------
@@ -169,7 +173,7 @@ class HarmonicRegressionModel(Model[Optional[np.ndarray]]):
         The evaluation function for the optimizer
         """
 
-        def harm_eval(step: np.ndarray, *params: Real) -> np.ndarray:
+        def harm_eval(step: npt.NDArray, *params: Real) -> npt.NDArray:
             params_ = np.array(params)
             mul = np.multiply(harmonics[step.astype(int)], params_)
             return np.sum(mul, axis=1)
@@ -178,7 +182,7 @@ class HarmonicRegressionModel(Model[Optional[np.ndarray]]):
 
     def fit_harmonics(
         self, period: float, fourier_order: int
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> Tuple[npt.NDArray, npt.NDArray]:
         """Performs harmonic regression.
         Harmonic regression fits cosines
         amplitude*cos(freq*t + phase). Using double angle identity formulas,

@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 # This file defines tests for the abstract Evaluator class
 
 import unittest
@@ -11,11 +13,9 @@ import unittest.mock as mock
 import numpy as np
 import pandas as pd
 from kats.compat.pandas import assert_frame_equal
-from kats.evaluation.evaluator import Evaluator, EvaluationObject
+from kats.evaluation.evaluator import EvaluationObject, Evaluator
 from kats.metrics.metrics import core_metric
-from kats.tests.test_backtester_dummy_data import (
-    PROPHET_0_108_FCST_DUMMY_DATA,
-)
+from kats.tests.test_backtester_dummy_data import PROPHET_0_108_FCST_DUMMY_DATA
 
 np.random.seed(42)
 
@@ -56,7 +56,7 @@ class EvaluatorTest(unittest.TestCase):
         # Duplicate
         self.evaluator.create_evaluation_run(run_name="duplicate_run")
         with self.assertRaises(ValueError):
-            self.evaluator.create_evaluation_run(run_name="duplicate_run"),
+            (self.evaluator.create_evaluation_run(run_name="duplicate_run"),)
 
     def test_delete_evaluation_run(self) -> None:
         self.evaluator.create_evaluation_run(run_name="delete_run")

@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import math
 from operator import attrgetter
 from typing import Sequence, Tuple
@@ -15,6 +17,7 @@ from kats.detectors.robust_stat_detection import (
     RobustStatChangePoint,
     RobustStatDetector,
 )
+
 from parameterized.parameterized import parameterized
 from sklearn.datasets import make_spd_matrix
 

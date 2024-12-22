@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import math
 from typing import Any, Dict, Union
 
@@ -147,7 +149,6 @@ def assert_series_equal(
         and hasattr(left.index, "freq")
         and hasattr(right.index, "freq")
     ):
-        # pyre-fixme[16]: `Index` has no attribute `freq`.
         assert left.index.freq == right.index.freq, (left.index.freq, right.index.freq)
     if (
         check_flags

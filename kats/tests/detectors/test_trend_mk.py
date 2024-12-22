@@ -3,12 +3,15 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 from operator import attrgetter
 from unittest import TestCase
 
 import pandas as pd
 from kats.detectors.trend_mk import MKDetector
 from kats.tests.detectors.utils import gen_no_trend_data_ndim, gen_trend_data_ndim
+
 from parameterized.parameterized import parameterized
 
 

@@ -3,10 +3,13 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import logging
-from typing import List, Union, Dict, Optional, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import torch
 from kats.consts import TimeSeriesData
@@ -74,9 +77,10 @@ class GMDataLoader:
             self.magnitude = magnitude
 
     def _valid_dataset(
+        self,
         # pyre-fixme[2]: Parameter annotation cannot contain `Any`.
-        self, dataset: Union[Dict[Any, TimeSeriesData], List[TimeSeriesData]]
-    ) -> Tuple[np.ndarray, np.ndarray]:
+        dataset: Union[Dict[Any, TimeSeriesData], List[TimeSeriesData]],
+    ) -> Tuple[npt.NDArray, npt.NDArray]:
         if len(dataset) < 1:
             msg = "Input dataset should be non-empty."
             logging.error(msg)
@@ -100,7 +104,7 @@ class GMDataLoader:
         lengths = np.array(lengths)
         return keys, lengths
 
-    def _get_new_order(self) -> np.ndarray:
+    def _get_new_order(self) -> npt.NDArray:
         """Generate new orders of time series."""
 
         if self.test_lengths is None:
@@ -203,7 +207,6 @@ class GMBatch:
         ] = None,
         mode: str = "train",
     ) -> None:
-
         if not isinstance(params, GMParam):
             msg = f"params should be a GMParam object but receives {type(params)}."
             logging.error(msg)
@@ -260,12 +263,12 @@ class GMBatch:
         if params.model_type == "rnn" and params.seasonality > 1:
             init_seasonality = self._get_seasonality(train_x, params.seasonality)
             # bound initial seasonalities
-            init_seasonality[
-                init_seasonality < params.init_seasonality[0]
-            ] = params.init_seasonality[0]
-            init_seasonality[
-                init_seasonality > params.init_seasonality[1]
-            ] = params.init_seasonality[1]
+            init_seasonality[init_seasonality < params.init_seasonality[0]] = (
+                params.init_seasonality[0]
+            )
+            init_seasonality[init_seasonality > params.init_seasonality[1]] = (
+                params.init_seasonality[1]
+            )
             # pyre-fixme[4]: Attribute must be annotated.
             self.init_seasonality = torch.tensor(init_seasonality, dtype=tdtype)
         else:
@@ -442,13 +445,12 @@ class GMBatch:
         reduced_length: int,
         reduced_valid_length: int,
     ) -> Tuple[
-        np.ndarray,
-        np.ndarray,
-        np.ndarray,
-        Optional[np.ndarray],
-        Optional[np.ndarray],
+        npt.NDArray,
+        npt.NDArray,
+        npt.NDArray,
+        Optional[npt.NDArray],
+        Optional[npt.NDArray],
     ]:
-
         """
 
         Helper function for transforming TS to arrays, including truncating/padding values,
@@ -467,11 +469,11 @@ class GMBatch:
             Reduced length of validation TSs and the validation tensor would be of shape (batch_size, reduced_valid_length).
 
         :Returns:
-        train_x: np.ndarray
+        train_x: npt.NDArray
             Training array of shape (batch_size, reduced_length).
-        train_time: np.ndarray
+        train_time: npt.NDArray
             Training time array of shape (batch_size, reduced_length).
-        offset: np.ndarray
+        offset: npt.NDArray
             Offset array of shape (batch_size,).
         valid_x: Optional[np.ndarray]
             Validation array of shape (batch_size, reduced_valid_length).
@@ -592,7 +594,7 @@ class GMBatch:
 
         return train_x, train_time, offset, valid_x, valid_time
 
-    def _get_seasonality(self, x: np.ndarray, seasonality: int) -> np.ndarray:
+    def _get_seasonality(self, x: npt.NDArray, seasonality: int) -> npt.NDArray:
         """
         Helper function for calculate initial seasonality.
 
@@ -607,7 +609,7 @@ class GMBatch:
         season = season / np.mean(season, axis=1)[:, None]
         return season
 
-    def _fillin_nan_values(self, x: np.ndarray, seasonality: int) -> np.ndarray:
+    def _fillin_nan_values(self, x: npt.NDArray, seasonality: int) -> npt.NDArray:
         if seasonality == 1:
             return x
         for i in range(1, seasonality):

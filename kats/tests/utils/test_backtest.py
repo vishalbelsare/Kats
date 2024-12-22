@@ -3,35 +3,41 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 # This file defines tests for the Backtester classes
 
 import statistics
 import unittest
 import unittest.mock as mock
-from typing import Any, Dict, List, Tuple
+from typing import Any, cast, Dict, List, Tuple
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from kats.consts import TimeSeriesData
 from kats.data.utils import load_air_passengers
 from kats.metrics.metrics import core_metric
 from kats.tests.test_backtester_dummy_data import (
-    PROPHET_EMPTY_DUMMY_DATA,
     PROPHET_0_108_FCST_DUMMY_DATA,
     PROPHET_0_72_FCST_DUMMY_DATA,
+    PROPHET_0_72_GAP_36_FCST_DUMMY_DATA,
     PROPHET_0_90_FCST_DUMMY_DATA,
     PROPHET_18_90_FCST_DUMMY_DATA,
     PROPHET_36_108_FCST_DUMMY_DATA,
-    PROPHET_0_72_GAP_36_FCST_DUMMY_DATA,
+    PROPHET_EMPTY_DUMMY_DATA,
 )
 from kats.utils.backtesters import (
+    _return_fold_offsets as return_fold_offsets,
     BackTesterExpandingWindow,
     BackTesterFixedWindow,
+    BacktesterResult,
     BackTesterRollingWindow,
     BackTesterSimple,
     CrossValidation,
-    _return_fold_offsets as return_fold_offsets,
+    KatsSimpleBacktester,
 )
+from kats.utils.datapartition import SimpleDataPartition
 
 # Constants
 ALL_ERRORS = ["mape", "smape", "mae", "mase", "mse", "rmse"]  # Errors to test
@@ -49,7 +55,7 @@ CV_NUM_FOLDS = 3  # Number of folds for cross validation
 
 
 def compute_errors(
-    train: np.ndarray, pred: np.ndarray, truth: np.ndarray
+    train: npt.NDArray, pred: npt.NDArray, truth: npt.NDArray
 ) -> Dict[str, float]:
     true_errors = {}
     for error in ALL_ERRORS:
@@ -60,9 +66,9 @@ def compute_errors(
 
 
 def compute_errors_list(
-    train: np.ndarray,
-    pred: np.ndarray,
-    truth: np.ndarray,
+    train: npt.NDArray,
+    pred: npt.NDArray,
+    truth: npt.NDArray,
     true_errors: Dict[str, List[float]],
 ) -> None:
     for error in ALL_ERRORS:
@@ -81,8 +87,6 @@ class SimpleBackTesterTest(unittest.TestCase):
         DATA = load_air_passengers(return_ts=False)
         cls.TSData = load_air_passengers()
         cls.train_data = cls.TSData[: len(cls.TSData) - TIMESTEPS]
-        # pyre-fixme[6]: For 1st param expected `Optional[DataFrame]` but got
-        #  `Union[DataFrame, Series]`.
         cls.test_data = TimeSeriesData(DATA.tail(TIMESTEPS))
 
     def prophet_predict_side_effect(self, *args: Any, **kwargs: Any) -> pd.DataFrame:
@@ -142,6 +146,48 @@ class SimpleBackTesterTest(unittest.TestCase):
                 round(value, FLOAT_ROUNDING_PARAM),
                 round(backtester.errors[error_name], FLOAT_ROUNDING_PARAM),
             )
+
+    def test_forbidden_train_test_splits(self) -> None:
+        """
+        Testing process consists of the following:
+          1. Backtest with mocked model
+          2. Set forbidden train test split values
+          3. Ensure backtester raises an exception
+        """
+
+        # Mock model results
+        model_class = mock.MagicMock()
+        model_class().predict.side_effect = self.prophet_predict_side_effect
+        model_params = mock.MagicMock()
+
+        # Create backtester for this given model class
+        bt = BackTesterSimple(
+            error_methods=ALL_ERRORS,
+            data=self.TSData,
+            params=model_params,
+            train_percentage=PERCENTAGE,
+            test_percentage=(100 - PERCENTAGE),
+            model_class=model_class,
+        )
+
+        # Create forbidden train test split values
+        forbidden_train_test_splits = [
+            (-10, 50, "Incorrect training size"),
+            (50, -10, "Incorrect testing size"),
+            (60, 60, "Incorrect training and testing sizes"),
+        ]
+
+        for train_p, test_p, expected_msg in forbidden_train_test_splits:
+            # Set backtester with forbidden train test split values
+            bt.train_percentage = train_p
+            bt.test_percentage = test_p
+
+            # Ensure backtester will raise an expection
+            with self.assertRaises(ValueError) as e:
+                bt._create_train_test_splits()
+
+            generated_msg = str(e.exception)
+            self.assertEqual(expected_msg, generated_msg)
 
 
 class ExpandingWindowBackTesterTest(unittest.TestCase):
@@ -292,6 +338,97 @@ class ExpandingWindowBackTesterTest(unittest.TestCase):
 
         # Test that folds are equivalent
         self.assertEqual(one_step_folds_expanding, folds_simple)
+
+    def test_forbidden_initialization_parameters(self) -> None:
+        """
+        Testing process consists of the following:
+          1. Create a Backtest instance with forbidden initial parameters
+          2. Ensure backtester raises an exception
+        """
+
+        forbidden_init_params = [
+            (-10, 50, EXPANDING_WINDOW_STEPS, "Invalid start training percentage"),
+            (110, 50, EXPANDING_WINDOW_STEPS, "Invalid end training percentage"),
+            (50, -10, EXPANDING_WINDOW_STEPS, "Invalid test percentage"),
+            (50, 110, EXPANDING_WINDOW_STEPS, "Invalid test percentage"),
+            (
+                60,
+                60,
+                EXPANDING_WINDOW_STEPS,
+                "Invalid training and testing percentage combination",
+            ),
+            (
+                50,
+                50,
+                EXPANDING_WINDOW_STEPS,
+                "Invalid training and testing percentage combination"
+                f" given for {EXPANDING_WINDOW_STEPS} expanding steps",
+            ),
+            (50, 50, -1, "Invalid expanding steps"),
+        ]
+
+        for (
+            start_train_p,
+            test_p,
+            expanding_steps,
+            expected_msg,
+        ) in forbidden_init_params:
+            # Create backtester with forbidden initialization parameters
+            with self.assertRaises(ValueError) as e:
+                BackTesterExpandingWindow(
+                    error_methods=ALL_ERRORS,
+                    data=self.TSData,
+                    params=self.model_params,
+                    start_train_percentage=start_train_p,
+                    end_train_percentage=PERCENTAGE,
+                    test_percentage=test_p,
+                    expanding_steps=expanding_steps,
+                    model_class=self.model_class,
+                    multi=False,
+                )
+
+            generated_msg = str(e.exception)
+            self.assertEqual(expected_msg, generated_msg)
+
+    def test_forbidden_train_test_splits(self) -> None:
+        """
+        Testing process consists of the following:
+          1. Create a Backtest instance with allowed train test split values
+          2. Set forbidden train test split values
+          3. Ensure backtester raises an exception
+        """
+
+        # Create backtester for this given model class
+        bt = BackTesterExpandingWindow(
+            error_methods=ALL_ERRORS,
+            data=self.TSData,
+            params=self.model_params,
+            start_train_percentage=EXPANDING_WINDOW_START,
+            end_train_percentage=PERCENTAGE,
+            test_percentage=(100 - PERCENTAGE),
+            expanding_steps=EXPANDING_WINDOW_STEPS,
+            model_class=self.model_class,
+            multi=False,
+        )
+
+        # Create forbidden train test split values
+        forbidden_train_test_splits = [
+            (-10, 50, "Incorrect starting training size"),
+            (60, 60, "Incorrect training and testing sizes"),
+            (50, 50, "Incorrect training and testing sizes for multiple steps"),
+        ]
+
+        for train_p, test_p, expected_msg in forbidden_train_test_splits:
+            # Set backtester with forbidden train test split values
+            bt.start_train_percentage = train_p
+            bt.test_percentage = test_p
+
+            # Ensure backtester will raise an expection
+            with self.assertRaises(ValueError) as e:
+                bt._create_train_test_splits()
+
+            generated_msg = str(e.exception)
+            self.assertEqual(expected_msg, generated_msg)
 
     @classmethod
     def create_folds(
@@ -507,8 +644,6 @@ class FixedWindowBackTesterTest(unittest.TestCase):
 
         # Creating folds
         cls.train_data = cls.TSData[: len(cls.TSData) - (TIMESTEPS * 2)]
-        # pyre-fixme[6]: For 1st param expected `Optional[DataFrame]` but got
-        #  `Union[DataFrame, Series]`.
         cls.test_data = TimeSeriesData(DATA.tail(TIMESTEPS))
 
     def prophet_predict_side_effect(self, *args: Any, **kwargs: Any) -> pd.DataFrame:
@@ -569,6 +704,89 @@ class FixedWindowBackTesterTest(unittest.TestCase):
                 round(value, FLOAT_ROUNDING_PARAM),
                 round(backtester.errors[error_name], FLOAT_ROUNDING_PARAM),
             )
+
+    def test_forbidden_initialization_parameters(self) -> None:
+        """
+        Testing process consists of the following:
+          1. Create a Backtest instance with forbidden initial parameters
+          2. Ensure backtester raises an exception
+        """
+
+        # Create backtester for this given model class
+        # Mock model results
+        model_class = mock.MagicMock()
+        model_class().predict.side_effect = self.prophet_predict_side_effect
+        model_params = mock.MagicMock()
+
+        forbidden_init_params = [
+            (-10, 50, FIXED_WINDOW_PERCENTAGE, "Invalid training percentage"),
+            (110, 50, FIXED_WINDOW_PERCENTAGE, "Invalid training percentage"),
+            (50, -10, FIXED_WINDOW_PERCENTAGE, "Invalid test percentage"),
+            (50, 110, FIXED_WINDOW_PERCENTAGE, "Invalid test percentage"),
+            (50, 50, -10, "Invalid window percentage"),
+            (50, 50, 110, "Invalid window percentage"),
+        ]
+
+        for train_p, test_p, window_p, expected_msg in forbidden_init_params:
+            # Create backtester with forbidden initialization parameters
+            with self.assertRaises(ValueError) as e:
+                BackTesterFixedWindow(
+                    error_methods=ALL_ERRORS,
+                    data=self.TSData,
+                    params=model_params,
+                    train_percentage=train_p,
+                    test_percentage=test_p,
+                    window_percentage=window_p,
+                    model_class=model_class,
+                )
+
+            generated_msg = str(e.exception)
+            self.assertEqual(expected_msg, generated_msg)
+
+    def test_forbidden_train_test_splits(self) -> None:
+        """
+        Testing process consists of the following:
+          1. Backtest with mocked model
+          2. Set forbidden train test split values
+          3. Ensure backtester raises an exception
+        """
+
+        # Create backtester for this given model class
+        # Mock model results
+        model_class = mock.MagicMock()
+        model_class().predict.side_effect = self.prophet_predict_side_effect
+        model_params = mock.MagicMock()
+
+        # Creating and running backtester for this given model class
+        bt = BackTesterFixedWindow(
+            error_methods=ALL_ERRORS,
+            data=self.TSData,
+            params=model_params,
+            train_percentage=FIXED_WINDOW_TRAIN_PERCENTAGE,
+            test_percentage=(100 - PERCENTAGE),
+            window_percentage=FIXED_WINDOW_PERCENTAGE,
+            model_class=model_class,
+        )
+
+        # Create forbidden train test split values
+        forbidden_train_test_splits = [
+            (-10, 50, 25, "Incorrect training size"),
+            (50, -10, 25, "Incorrect testing size"),
+            (50, 50, 25, "Incorrect training, testing, & window sizes"),
+        ]
+
+        for train_p, test_p, window_p, expected_msg in forbidden_train_test_splits:
+            # Set backtester with forbidden train test split values
+            bt.train_percentage = train_p
+            bt.test_percentage = test_p
+            bt.window_percentage - window_p
+
+            # Ensure backtester will raise an expection
+            with self.assertRaises(ValueError) as e:
+                bt._create_train_test_splits()
+
+            generated_msg = str(e.exception)
+            self.assertEqual(expected_msg, generated_msg)
 
 
 class CrossValidationTest(unittest.TestCase):
@@ -773,7 +991,6 @@ class CrossValidationTest(unittest.TestCase):
         rolling_cv_results = (temp_cv, true_errors)
 
         # Test CV initialization
-        # self.assertEqual(self.model_class.call_count, 7)
         self.model_class.assert_has_calls(
             [
                 mock.call(
@@ -796,7 +1013,6 @@ class CrossValidationTest(unittest.TestCase):
         )
 
         # Testing CV predict
-        # self.assertEqual(self.model_class().predict.call_count, 6)
         self.model_class().assert_has_calls(
             [
                 mock.call.fit(),
@@ -815,6 +1031,38 @@ class CrossValidationTest(unittest.TestCase):
                 round(value, FLOAT_ROUNDING_PARAM),
                 round(cv.errors[error_name], FLOAT_ROUNDING_PARAM),
             )
+
+    def test_forbidden_initialization_parameters(self) -> None:
+        """
+        Testing process consists of the following:
+          1. Create a cross validation instance with forbidden initial parameters
+          2. Ensure cross validation raises an exception
+        """
+
+        forbidden_init_params = [
+            (-10, 50, CV_NUM_FOLDS, "Invalid training percentage"),
+            (110, 50, CV_NUM_FOLDS, "Invalid training percentage"),
+            (50, -10, CV_NUM_FOLDS, "Invalid test percentage"),
+            (50, 110, CV_NUM_FOLDS, "Invalid test percentage"),
+            (50, 50, -10, "Invalid number of folds"),
+        ]
+
+        for train_p, test_p, num_folds, expected_msg in forbidden_init_params:
+            # Create cross validation object with forbidden initialization parameters
+            with self.assertRaises(ValueError) as e:
+                CrossValidation(
+                    error_methods=ALL_ERRORS,
+                    data=self.TSData,
+                    params=self.model_params,
+                    train_percentage=train_p,
+                    test_percentage=test_p,
+                    num_folds=num_folds,
+                    model_class=self.model_class,
+                    multi=False,
+                )
+
+            generated_msg = str(e.exception)
+            self.assertEqual(expected_msg, generated_msg)
 
     def create_folds(
         self,
@@ -852,3 +1100,38 @@ class CrossValidationTest(unittest.TestCase):
                 ]
             )
         return train_folds, test_folds
+
+
+class KatsSimpleBacktesterTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        # Setting up data
+        cls.ts = TimeSeriesData(
+            time=pd.date_range("2022-05-06", periods=20), value=pd.Series(np.arange(20))
+        )
+
+    def side_effect(self, *args: Any, **kwargs: Any) -> pd.DataFrame:
+        n = kwargs["steps"]
+        return pd.DataFrame({"y": np.arange(n), "fcst": np.arange(n)})
+
+    def test_backtester(self) -> None:
+        # mock forecasting model
+        model_class = mock.MagicMock()
+        model_class().predict.side_effect = self.side_effect
+        model_params = mock.MagicMock()
+        # initiate data partition
+        dp = SimpleDataPartition(train_frac=0.9)
+        # run backtester
+        bt = KatsSimpleBacktester(
+            datapartition=dp,
+            # pyre-fixme Incompatible parameter type [6]: In call `KatsSimpleBacktester.__init__`, for 2nd parameter `scorer` expected `Union[List[Union[Metric, MultiOutputMetric, WeightedMetric, str]], Metric, MultiOutputMetric, WeightedMetric, Scorer, str]` but got `List[str]`.
+            scorer=ALL_ERRORS,
+            model_params=model_params,
+            model_class=model_class,
+        )
+        bt.run_backtester(self.ts)
+        bt_res = cast(BacktesterResult, bt.get_errors())
+        # get errors directly via model
+        errors = compute_errors(np.arange(18), np.arange(2), np.arange(18, 20))
+        self.assertEqual(bt_res.fold_errors, [errors])
+        self.assertEqual(bt_res.summary_errors, errors)

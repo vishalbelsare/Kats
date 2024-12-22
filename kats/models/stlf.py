@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """STLF forecasting model
 
 This model starts from decomposing the time series data with STL decomposition
@@ -21,22 +23,35 @@ from __future__ import (
 
 import logging
 import math
+import operator
+import operator as _operator
 from copy import copy
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, cast, Dict, List, Optional, Union
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from kats.consts import Params, TimeSeriesData
-from kats.models import linear_model, prophet, quadratic_model, theta
-from kats.models.linear_model import LinearModel
+from kats.models import (
+    linear_model,
+    prophet,
+    quadratic_model,
+    simple_heuristic_model,
+    theta,
+)
+from kats.models.linear_model import LinearModel, LinearModelParams
 from kats.models.model import Model
-from kats.models.prophet import ProphetModel
-from kats.models.quadratic_model import QuadraticModel
-from kats.models.theta import ThetaModel
+from kats.models.prophet import ProphetModel, ProphetParams
+from kats.models.quadratic_model import QuadraticModel, QuadraticModelParams
+from kats.models.simple_heuristic_model import (
+    SimpleHeuristicModel,
+    SimpleHeuristicModelParams,
+)
+from kats.models.theta import ThetaModel, ThetaParams
 from kats.utils.decomposition import TimeSeriesDecomposition
 from kats.utils.parameter_tuning_utils import get_default_stlf_parameter_search_space
 
-MODELS = ["prophet", "linear", "quadratic", "theta"]
+MODELS = ["prophet", "linear", "quadratic", "theta", "simple"]
 
 
 class STLFParams(Params):
@@ -48,26 +63,89 @@ class STLFParams(Params):
     Attributes:
         method: str, the forecasting model to fit on the de-seasonalized component
             it currently supports prophet, linear, quadratic, and theta method.
-        m: int, the length of one seasonal cycle
+        m: int, the length of one seasonal cycle, same as period in statsmodel STL
+        method_params: Optional[Params], the parameters for the method
+        decomposition: str, `additive` or `multiplicative` decomposition. Default is `multiplicative` because of legacy
+        seasonal: int, Length of the seasonal smoother. Must be an odd integer, and should normally be >= 7 (default).
+        trend: Optional[int], Length of the trend smoother. Must be an odd integer.
+              If not provided uses the smallest odd integer greater than 1.5 * period / (1 - 1.5 / seasonal),
+              following the suggestion in the original implementation.
+        low_pass: Optional[int], Length of the low-pass filter. Must be an odd integer >=3. If not provided, uses the smallest odd integer > period.
+        seasonal_deg: int, Degree of seasonal LOESS. 0 (constant) or 1 (constant and trend).
+        trend_deg: int, Degree of trend LOESS. 0 (constant) or 1 (constant and trend).
+        low_pass_deg: int, Degree of low pass LOESS. 0 (constant) or 1 (constant and trend).
+        robust: bool, Flag indicating whether to use a weighted version that is robust to some forms of outliers.
+        seasonal_jump: int, Positive integer determining the linear interpolation step.
+                       If larger than 1, the LOESS is used every seasonal_jump points and linear interpolation is between fitted points.
+                       Higher values reduce estimation time.
+        trend_jump: int, Positive integer determining the linear interpolation step.
+                    If larger than 1, the LOESS is used every trend_jump points and values between the two are linearly interpolated.
+                    Higher values reduce estimation time.
+        low_pass_jump: int, Positive integer determining the linear interpolation step.
+                       If larger than 1, the LOESS is used every low_pass_jump points and values between the two are linearly interpolated.
+                       Higher values reduce estimation time.
     """
 
-    def __init__(self, method: str, m: int) -> None:
+    def __init__(
+        self,
+        method: str,
+        m: int,
+        method_params: Optional[Params] = None,
+        decomposition: str = "multiplicative",
+        seasonal: int = 7,
+        trend: Optional[int] = None,
+        low_pass: Optional[int] = None,
+        seasonal_deg: int = 1,
+        trend_deg: int = 1,
+        low_pass_deg: int = 1,
+        robust: bool = False,
+        seasonal_jump: int = 1,
+        trend_jump: int = 1,
+        low_pass_jump: int = 1,
+    ) -> None:
         super().__init__()
-        if method not in MODELS:
-            msg = "Only support prophet, linear, quadratic and theta method, but get {name}.".format(
-                name=method
-            )
-            logging.error(msg)
-            raise ValueError(msg)
         self.method = method
         self.m = m
+        self.method_params = method_params
+        self.decomposition = decomposition
+        self.seasonal = seasonal
+        self.trend = trend
+        self.low_pass = low_pass
+        self.seasonal_deg = seasonal_deg
+        self.trend_deg = trend_deg
+        self.low_pass_deg = low_pass_deg
+        self.robust = robust
+        self.seasonal_jump = seasonal_jump
+        self.trend_jump = trend_jump
+        self.low_pass_jump = low_pass_jump
+        self.validate_params()
         logging.debug("Initialized STFLParams instance.")
 
     def validate_params(self) -> None:
         """Validate the parameters for STLF model"""
 
-        logging.info("Method validate_params() is not implemented.")
-        pass
+        if self.method not in MODELS:
+            msg = f"Only support {', '.join(MODELS)} method, but get {self.method}."
+            logging.error(msg)
+            raise ValueError(msg)
+
+        if self.method_params is None:
+            if self.method == "prophet":
+                self.method_params = prophet.ProphetParams()
+            elif self.method == "theta":
+                self.method_params = theta.ThetaParams(m=1)
+            elif self.method == "linear":
+                self.method_params = linear_model.LinearModelParams()
+            elif self.method == "simple":
+                self.method_params = simple_heuristic_model.SimpleHeuristicModelParams()
+            else:
+                assert self.method == "quadratic"
+                self.method_params = quadratic_model.QuadraticModelParams()
+
+            if self.decomposition not in ["additive", "multiplicative"]:
+                msg = "decomposition can be only `additive` or `multiplicative` strings"
+                logging.error(msg)
+                raise ValueError(msg)
 
 
 class STLFModel(Model[STLFParams]):
@@ -82,15 +160,34 @@ class STLFModel(Model[STLFParams]):
 
     decomp: Optional[Dict[str, TimeSeriesData]] = None
     sea_data: Optional[TimeSeriesData] = None
+    trend_data: Optional[TimeSeriesData] = None
     desea_data: Optional[TimeSeriesData] = None
-    model: Optional[Union[LinearModel, ProphetModel, QuadraticModel, ThetaModel]] = None
+    model: Optional[
+        Union[
+            LinearModel, ProphetModel, QuadraticModel, SimpleHeuristicModel, ThetaModel
+        ]
+    ] = None
     freq: Optional[str] = None
     alpha: Optional[float] = None
-    y_fcst: Optional[np.ndarray] = None
-    fcst_lower: Optional[np.ndarray] = None
-    fcst_upper: Optional[np.ndarray] = None
+    y_fcst: Optional[Union[npt.NDArray, pd.Series, pd.DataFrame]] = None
+    fcst_lower: Optional[Union[npt.NDArray, pd.Series, pd.DataFrame]] = None
+    fcst_upper: Optional[Union[npt.NDArray, pd.Series, pd.DataFrame]] = None
     dates: Optional[pd.DatetimeIndex] = None
     fcst_df: Optional[pd.DataFrame] = None
+    deseasonal_operator: Callable(Union[_operator.truediv, _operator.sub])[
+        [
+            Union[pd.Series, pd.DataFrame],
+            Union[pd.Series, pd.DataFrame],
+        ],
+        Union[pd.Series, pd.DataFrame],
+    ]
+    reseasonal_operator: Callable(Union[_operator.mul, _operator.add])[
+        [
+            Union[pd.Series, pd.DataFrame],
+            Union[pd.Series, pd.DataFrame],
+        ],
+        Union[npt.NDArray, pd.Series, pd.DataFrame],
+    ]
 
     def __init__(self, data: TimeSeriesData, params: STLFParams) -> None:
         super().__init__(data, params)
@@ -108,6 +205,14 @@ class STLFModel(Model[STLFParams]):
             logging.error(msg)
             raise ValueError(msg)
 
+        if self.params.decomposition == "multiplicative":
+            self.deseasonal_operator = operator.truediv
+            self.reseasonal_operator = operator.mul
+        else:
+            assert self.params.decomposition == "additive"
+            self.deseasonal_operator = operator.sub
+            self.reseasonal_operator = operator.add
+
     def deseasonalize(self) -> STLFModel:
         """De-seasonalize the time series data
 
@@ -120,15 +225,33 @@ class STLFModel(Model[STLFParams]):
         """
 
         # create decomposer for time series decomposition
-        # pyre-fixme[6]: For 1st param expected `TimeSeriesData` but got
-        #  `Optional[TimeSeriesData]`.
-        decomposer = TimeSeriesDecomposition(self.data, "multiplicative")
+        decomposer = TimeSeriesDecomposition(
+            data=cast(TimeSeriesData, self.data),
+            decomposition=self.params.decomposition,
+            method="STL",
+            period=self.params.m,
+            seasonal=self.params.seasonal,
+            trend=self.params.trend,
+            low_pass=self.params.low_pass,
+            seasonal_deg=self.params.seasonal_deg,
+            trend_deg=self.params.trend_deg,
+            low_pass_deg=self.params.low_pass_deg,
+            robust=self.params.robust,
+            seasonal_jump=self.params.seasonal_jump,
+            trend_jump=self.params.trend_jump,
+            low_pass_jump=self.params.low_pass_jump,
+        )
+
         self.decomp = decomp = decomposer.decomposer()
 
         self.sea_data = copy(decomp["seasonal"])
+        self.trend_data = copy(decomp["trend"])
         self.desea_data = desea_data = copy(self.data)
         # pyre-fixme[16]: `Optional` has no attribute `value`.
-        desea_data.value = desea_data.value / decomp["seasonal"].value
+        desea_data.value = self.deseasonal_operator(
+            desea_data.value, decomp["seasonal"].value
+        )
+
         return self
 
     # pyre-fixme[15]: `fit` overrides method defined in `Model` inconsistently.
@@ -146,32 +269,40 @@ class STLFModel(Model[STLFParams]):
             "Call fit() with parameters. " "kwargs:{kwargs}".format(kwargs=kwargs)
         )
         self.deseasonalize()
-        data = self.desea_data
+        if self.params.method == "simple":
+            data = self.trend_data
+        else:
+            data = self.desea_data
         assert data is not None
         if self.params.method == "prophet":
-            params = prophet.ProphetParams()
             model = prophet.ProphetModel(
                 data=data,
-                params=params,
+                params=cast(ProphetParams, self.params.method_params),
             )
-            model.fit()
         elif self.params.method == "theta":
-            params = theta.ThetaParams(m=1)
-            model = theta.ThetaModel(data=data, params=params)
-            model.fit()
+            model = theta.ThetaModel(
+                data=data, params=cast(ThetaParams, self.params.method_params)
+            )
         elif self.params.method == "linear":
-            params = linear_model.LinearModelParams()
-            model = linear_model.LinearModel(data=data, params=params)
-            model.fit()
+            model = linear_model.LinearModel(
+                data=data, params=cast(LinearModelParams, self.params.method_params)
+            )
+        elif self.params.method == "simple":
+            model = simple_heuristic_model.SimpleHeuristicModel(
+                data=data,
+                params=cast(SimpleHeuristicModelParams, self.params.method_params),
+            )
         else:
             assert self.params.method == "quadratic"
-            params = quadratic_model.QuadraticModelParams()
-            model = quadratic_model.QuadraticModel(data=data, params=params)
-            model.fit()
+            model = quadratic_model.QuadraticModel(
+                data=data, params=cast(QuadraticModelParams, self.params.method_params)
+            )
+        model.fit()
         self.model = model
         return self
 
     # pyre-fixme[15]: `predict` overrides method defined in `Model` inconsistently.
+    # pyre-fixme[14]: `predict` overrides method defined in `Model` inconsistently.
     def predict(
         self, steps: int, *args: Any, include_history: bool = False, **kwargs: Any
     ) -> pd.DataFrame:
@@ -192,12 +323,15 @@ class STLFModel(Model[STLFParams]):
         assert decomp is not None
 
         logging.debug(
-            "Call predict() with parameters. "
-            "steps:{steps}, kwargs:{kwargs}".format(steps=steps, kwargs=kwargs)
+            "Call predict() with parameters. " "steps:{steps}, kwargs:{kwargs}".format(
+                steps=steps, kwargs=kwargs
+            )
         )
         self.include_history = include_history
         # pyre-fixme[16]: `Optional` has no attribute `time`.
         self.freq = kwargs.get("freq", pd.infer_freq(self.data.time))
+        if self.freq is None:
+            logging.info("Could not infer freq, will default to 'D' (daily)")
         self.alpha = kwargs.get("alpha", 0.05)
 
         # trend forecast
@@ -209,13 +343,15 @@ class STLFModel(Model[STLFParams]):
 
         seasonality = decomp["seasonal"].value[-m:]
 
-        self.y_fcst = fcst.fcst * np.tile(seasonality, rep)[: fcst.shape[0]]
+        self.y_fcst = self.reseasonal_operator(
+            fcst.fcst, np.tile(seasonality, rep)[: fcst.shape[0]]
+        )
         if ("fcst_lower" in fcst.columns) and ("fcst_upper" in fcst.columns):
-            self.fcst_lower = (
-                fcst.fcst_lower * np.tile(seasonality, rep)[: fcst.shape[0]]
+            self.fcst_lower = self.reseasonal_operator(
+                fcst.fcst_lower, np.tile(seasonality, rep)[: fcst.shape[0]]
             )
-            self.fcst_upper = (
-                fcst.fcst_upper * np.tile(seasonality, rep)[: fcst.shape[0]]
+            self.fcst_upper = self.reseasonal_operator(
+                fcst.fcst_upper, np.tile(seasonality, rep)[: fcst.shape[0]]
             )
         logging.info("Generated forecast data from STLF model.")
         logging.debug("Forecast data: {fcst}".format(fcst=self.y_fcst))

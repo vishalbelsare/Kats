@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import unittest
 from typing import Any, Dict, Optional, Union
 from unittest import TestCase
@@ -11,21 +13,22 @@ import numpy as np
 import pandas as pd
 from kats.compat.pandas import assert_frame_equal
 from kats.consts import TimeSeriesData
-from kats.data.utils import load_data, load_air_passengers
+from kats.data.utils import load_air_passengers, load_data
 from kats.models.sarima import SARIMAModel, SARIMAParams
 from kats.tests.models.test_models_dummy_data import (
     AIR_FCST_15_SARIMA_PARAM_1_MODEL_1,
-    AIR_FCST_15_SARIMA_PARAM_2_MODEL_1,
-    AIR_FCST_30_SARIMA_PARAM_1_MODEL_1,
-    AIR_FCST_30_SARIMA_PARAM_2_MODEL_1,
-    AIR_FCST_15_SARIMA_PARAM_2_MODEL_2,
-    AIR_FCST_30_SARIMA_PARAM_2_MODEL_2,
-    AIR_FCST_15_SARIMA_PARAM_1_MODEL_2,
-    AIR_FCST_30_SARIMA_PARAM_1_MODEL_2,
     AIR_FCST_15_SARIMA_PARAM_1_MODEL_1_INCL_HIST,
+    AIR_FCST_15_SARIMA_PARAM_1_MODEL_2,
+    AIR_FCST_15_SARIMA_PARAM_2_MODEL_1,
+    AIR_FCST_15_SARIMA_PARAM_2_MODEL_2,
+    AIR_FCST_30_SARIMA_PARAM_1_MODEL_1,
     AIR_FCST_30_SARIMA_PARAM_1_MODEL_1_INCL_HIST,
+    AIR_FCST_30_SARIMA_PARAM_1_MODEL_2,
+    AIR_FCST_30_SARIMA_PARAM_2_MODEL_1,
+    AIR_FCST_30_SARIMA_PARAM_2_MODEL_2,
     EXOG_FCST_15_SARIMA_PARAM_EXOG_MODEL_1,
 )
+
 from parameterized.parameterized import parameterized
 
 AIR_TS: pd.DataFrame = load_air_passengers()
@@ -206,7 +209,11 @@ class SARIMAModelTest(TestCase):
         ).reset_index(
             drop=True,
         )
+        # pyre-fixme[6]: For 2nd argument expected `DataFrame` but got
+        #  `Optional[DataFrame]`.
         assert_frame_equal(truth_1, res_1, rtol=0.01)
+        # pyre-fixme[6]: For 2nd argument expected `DataFrame` but got
+        #  `Optional[DataFrame]`.
         assert_frame_equal(truth_2, res_2, rtol=0.01)
 
     def test_exog(self) -> None:
@@ -238,6 +245,8 @@ class SARIMAModelTest(TestCase):
         )
 
         # Compare against truth
+        # pyre-fixme[6]: For 2nd argument expected `DataFrame` but got
+        #  `Optional[DataFrame]`.
         assert_frame_equal(EXOG_FCST_15_SARIMA_PARAM_EXOG_MODEL_1, res, rtol=0.01)
 
         # Should raise a ValueError if exogenous variables aren't used to predict

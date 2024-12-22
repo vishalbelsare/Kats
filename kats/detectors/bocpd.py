@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 
 """
 This module contains classes and functions used for implementing
@@ -16,6 +18,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import (
     Any,
+    Callable,
+    cast,
     Dict,
     List,
     Optional,
@@ -23,17 +27,16 @@ from typing import (
     Tuple,
     Type,
     Union,
-    cast,
-    Callable,
 )
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
-from kats.consts import TimeSeriesChangePoint, TimeSeriesData, SearchMethodEnum
+from kats.consts import SearchMethodEnum, TimeSeriesChangePoint, TimeSeriesData
 from kats.detectors.detector import Detector
 from scipy.special import logsumexp  # @manual
-from scipy.stats import invgamma, linregress, norm, nbinom  # @manual
+from scipy.stats import invgamma, linregress, nbinom, norm  # @manual
 
 try:
     import kats.utils.time_series_parameter_tuning as tpt
@@ -84,6 +87,7 @@ class BOCPDChangePoint(TimeSeriesChangePoint):
 
     def __init__(
         self,
+        # pyre-fixme[11]: Annotation `Timestamp` is not defined as a type.
         start_time: pd.Timestamp,
         end_time: pd.Timestamp,
         confidence: float,
@@ -226,7 +230,7 @@ class TrendChangeParameters(BOCPDModelParameters):
             debug.
     """
 
-    mu_prior: Optional[np.ndarray] = None
+    mu_prior: Optional[npt.NDArray] = None
     num_likelihood_samples: int = 100
     num_points_prior: int = _MIN_POINTS
     readjust_sigma_prior: bool = False
@@ -449,6 +453,7 @@ class BOCPDetector(Detector):
 
         return change_points
 
+    # pyre-fixme[14]: `plot` overrides method defined in `Detector` inconsistently.
     def plot(
         self,
         change_points: Sequence[BOCPDChangePoint],
@@ -636,7 +641,7 @@ class BOCPDetector(Detector):
 
         return dict(change_points_per_ts)
 
-    def get_change_prob(self) -> Dict[str, np.ndarray]:
+    def get_change_prob(self) -> Dict[str, npt.NDArray]:
         """Returns the probability of being a changepoint.
 
         Args:
@@ -653,7 +658,7 @@ class BOCPDetector(Detector):
             raise ValueError("detector needs to be run before getting prob")
         return self.change_prob
 
-    def get_run_length_matrix(self) -> Dict[str, np.ndarray]:
+    def get_run_length_matrix(self) -> Dict[str, npt.NDArray]:
         """Returns the entire run-time posterior.
         Args:
             None.
@@ -719,15 +724,16 @@ class _BayesOnlineChangePoint(Detector):
         maximum values diagonally.
     """
 
-    rt_posterior: Optional[np.ndarray] = None
-    pred_mean_arr: Optional[np.ndarray] = None
-    pred_std_arr: Optional[np.ndarray] = None
-    next_pred_prob: Optional[np.ndarray] = None
-    threshold: Optional[np.ndarray] = None
-    posterior_predictive: np.ndarray
+    rt_posterior: Optional[npt.NDArray] = None
+    pred_mean_arr: Optional[npt.NDArray] = None
+    pred_std_arr: Optional[npt.NDArray] = None
+    next_pred_prob: Optional[npt.NDArray] = None
+    threshold: Optional[npt.NDArray] = None
+    posterior_predictive: npt.NDArray
     T: int
     P: int
-    data_values: np.ndarray
+    data_values: npt.NDArray
+    # pyre-fixme[24]: Generic type `slice` expects 3 type parameters.
     _ts_slice: Union[int, slice]
     _ts_names: Sequence[str]
     _posterior_shape: Tuple[int, int, int]
@@ -750,6 +756,7 @@ class _BayesOnlineChangePoint(Detector):
         # the same calculation throughout with fewer additional checks
         # for univariate and bivariate data.
         if not data.is_univariate():
+            # pyre-fixme[4]: Attribute annotation cannot contain `Any`.
             self._ts_slice = slice(None)
             self.P = data.value.shape[1]  # Number of time series
             self._ts_names = list(self.data.value.columns)
@@ -758,7 +765,9 @@ class _BayesOnlineChangePoint(Detector):
             self.P = 1
             self._ts_slice = 0
             data_df = self.data.to_dataframe()
-            self._ts_names = [x for x in data_df.columns if x != self.data.time_col_name]
+            self._ts_names = [
+                x for x in data_df.columns if x != self.data.time_col_name
+            ]
 
             self.data_values = np.expand_dims(data.value.values, axis=1)
 
@@ -771,8 +780,8 @@ class _BayesOnlineChangePoint(Detector):
     def detector(
         self,
         model: Union[SupportedModelType, "_PredictiveModel"],
-        threshold: Union[float, np.ndarray] = 0.5,
-        changepoint_prior: Union[float, np.ndarray] = 0.01,
+        threshold: Union[float, npt.NDArray] = 0.5,
+        changepoint_prior: Union[float, npt.NDArray] = 0.01,
     ) -> Dict[str, Any]:
         """Runs the actual BOCPD detection algorithm.
 
@@ -797,7 +806,7 @@ class _BayesOnlineChangePoint(Detector):
         self.rt_posterior = self._find_posterior(model, changepoint_prior)
         return self._construct_output(threshold, lag=self.lag)
 
-    def get_posterior_predictive(self) -> np.ndarray:
+    def get_posterior_predictive(self) -> npt.NDArray:
         """Returns the posterior predictive.
 
         This is  sum_{t=1}^T P(x_{t+1}|x_{1:t})
@@ -814,8 +823,8 @@ class _BayesOnlineChangePoint(Detector):
     def _find_posterior(
         self,
         model: Union[SupportedModelType, "_PredictiveModel"],
-        changepoint_prior: np.ndarray,
-    ) -> np.ndarray:
+        changepoint_prior: npt.NDArray,
+    ) -> npt.NDArray:
         """
         This calculates the posterior distribution over changepoints.
         The steps here are the same as the algorithm described in
@@ -946,7 +955,7 @@ class _BayesOnlineChangePoint(Detector):
 
     def plot(
         self,
-        threshold: Optional[Union[float, np.ndarray]] = None,
+        threshold: Optional[Union[float, npt.NDArray]] = None,
         lag: Optional[int] = None,
         ts_names: Optional[List[str]] = None,
         **kwargs: Any,
@@ -1054,7 +1063,7 @@ class _BayesOnlineChangePoint(Detector):
                 plt.title("Debugging: Predicted Probabilities")
         return axs
 
-    def _calc_agg_cppprob(self, t: int) -> np.ndarray:
+    def _calc_agg_cppprob(self, t: int) -> npt.NDArray:
         rt_posterior = self.rt_posterior
         assert rt_posterior is not None
         run_length_pos = rt_posterior[:, :, t]
@@ -1064,7 +1073,7 @@ class _BayesOnlineChangePoint(Detector):
             change_prob[i] = np.max(run_length_pos[i:, : (self.T - i)].diagonal())
         return change_prob
 
-    def _construct_output(self, threshold: np.ndarray, lag: int) -> Dict[str, Any]:
+    def _construct_output(self, threshold: npt.NDArray, lag: int) -> Dict[str, Any]:
         output = {}
         rt_posterior = self.rt_posterior
         assert rt_posterior is not None
@@ -1089,7 +1098,7 @@ class _BayesOnlineChangePoint(Detector):
 
         return output
 
-    def adjust_parameters(self, threshold: np.ndarray, lag: int) -> Dict[str, Any]:
+    def adjust_parameters(self, threshold: npt.NDArray, lag: int) -> Dict[str, Any]:
         """Adjust the parameters.
 
         If the preset parameters are not giving the desired result,
@@ -1154,15 +1163,15 @@ class _PredictiveModel(ABC):
         pass
 
     @abstractmethod
-    def pred_prob(self, t: int, x: float) -> np.ndarray:
+    def pred_prob(self, t: int, x: float) -> npt.NDArray:
         pass
 
     @abstractmethod
-    def pred_mean(self, t: int, x: float) -> np.ndarray:
+    def pred_mean(self, t: int, x: float) -> npt.NDArray:
         pass
 
     @abstractmethod
-    def pred_std(self, t: int, x: float) -> np.ndarray:
+    def pred_std(self, t: int, x: float) -> npt.NDArray:
         pass
 
     @abstractmethod
@@ -1192,7 +1201,6 @@ class _NormalKnownPrec(_PredictiveModel):
     _data_shape: Union[int, Tuple[int, int]]
 
     def __init__(self, data: TimeSeriesData, parameters: NormalKnownParameters) -> None:
-
         # \mu \sim N(\mu0, \frac{1}{\lambda0})
         # x \sim N(\mu,\frac{1}{\lambda})
 
@@ -1227,8 +1235,8 @@ class _NormalKnownPrec(_PredictiveModel):
         # where we grow the array from the end of the array. This
         # makes insertions constant time and means we can use
         # vectorized computation throughout.
-        self._mean_arr_num: np.ndarray = np.zeros(self._data_shape)
-        self._std_arr: np.ndarray = np.zeros(self._data_shape)
+        self._mean_arr_num: npt.NDArray = np.zeros(self._data_shape)
+        self._std_arr: npt.NDArray = np.zeros(self._data_shape)
         self._ptr = 0
 
         # if priors are going to be decided empirically,
@@ -1245,10 +1253,10 @@ class _NormalKnownPrec(_PredictiveModel):
         ):
             # We set these here to avoid recomputing the linear expression
             # throughout + avoid unnecessarily zeroing the memory etc.
-            self._mean_arr: np.ndarray = np.repeat(
+            self._mean_arr: npt.NDArray = np.repeat(
                 np.expand_dims(self.mu_0 * self.lambda_0, axis=0), self._maxT, axis=0
             )
-            self._prec_arr: np.ndarray = np.repeat(
+            self._prec_arr: npt.NDArray = np.repeat(
                 np.expand_dims(self.lambda_0, axis=0), self._maxT, axis=0
             )
         else:
@@ -1292,12 +1300,12 @@ class _NormalKnownPrec(_PredictiveModel):
                 self.parameters.known_prec_multiplier / var_arr.mean().values
             )
 
-        logging.debug("Empirical Prior: mu_0:", self.mu_0)
-        logging.debug("Empirical Prior: lambda_0:", self.lambda_0)
-        logging.debug("Empirical Prior: lambda_val:", self.lambda_val)
+        logging.debug(f"Empirical Prior: mu_0: {self.mu_0}")
+        logging.debug(f"Empirical Prior: lambda_0: {self.lambda_0}")
+        logging.debug(f"Empirical Prior: lambda_val: {self.lambda_val}")
 
     @staticmethod
-    def _norm_logpdf(x: float, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
+    def _norm_logpdf(x: float, mean: npt.NDArray, std: npt.NDArray) -> npt.NDArray:
         """
         Hardcoded version of scipy.norm.logpdf.
         This is hardcoded because scipy version is slow due to checks +
@@ -1306,7 +1314,7 @@ class _NormalKnownPrec(_PredictiveModel):
 
         return -np.log(std) - _LOG_SQRT2PI - 0.5 * ((x - mean) / std) ** 2
 
-    def pred_prob(self, t: int, x: float) -> np.ndarray:
+    def pred_prob(self, t: int, x: float) -> npt.NDArray:
         """Returns log predictive probabilities.
 
         We will give log predictive probabilities for
@@ -1331,10 +1339,10 @@ class _NormalKnownPrec(_PredictiveModel):
         )
         return pred_arr
 
-    def pred_mean(self, t: int, x: float) -> np.ndarray:
+    def pred_mean(self, t: int, x: float) -> npt.NDArray:
         return self._mean_arr[self._maxT + self._ptr : self._maxT + self._ptr + t]
 
-    def pred_std(self, t: int, x: float) -> np.ndarray:
+    def pred_std(self, t: int, x: float) -> npt.NDArray:
         return self._std_arr[self._maxT + self._ptr : self._maxT + self._ptr + t]
 
     def update_sufficient_stats(self, x: float) -> None:
@@ -1414,7 +1422,7 @@ class _BayesianLinReg(_PredictiveModel):
         parameters: Specifying all the priors.
     """
 
-    mu_prior: Optional[np.ndarray] = None
+    mu_prior: Optional[npt.NDArray] = None
     prior_regression_numpoints: Optional[int] = None
 
     def __init__(
@@ -1437,18 +1445,18 @@ class _BayesianLinReg(_PredictiveModel):
             f"sigma prior adjustment {readjust_sigma_prior}, "
             f"and plot prior regression {plot_regression_prior}"
         )
-        self._x: Optional[np.ndarray] = None
-        self._y: Optional[np.ndarray] = None
+        self._x: Optional[npt.NDArray] = None
+        self._y: Optional[npt.NDArray] = None
         self.t = 0
 
         # Random numbers I tried out to make the sigma_squared values really large
         self.a_0 = 0.1  # TODO find better priors?
         self.b_0 = 200.0  # TODO
 
-        self.all_time: np.ndarray = np.array(range(data.time.shape[0]))
-        self.all_vals: Union[pd.DataFrame, pd.Series, np.ndarray] = data.value
+        self.all_time: npt.NDArray = np.array(range(data.time.shape[0]))
+        self.all_vals: Union[pd.DataFrame, pd.Series, npt.NDArray] = data.value
 
-        self.lambda_prior: np.ndarray = np.multiply(2e-7, np.identity(2))
+        self.lambda_prior: npt.NDArray = np.multiply(2e-7, np.identity(2))
 
         self.num_likelihood_samples: int = num_likelihood_samples
         self.min_sum_samples: int = int(
@@ -1522,8 +1530,8 @@ class _BayesianLinReg(_PredictiveModel):
 
     @staticmethod
     def _plot_regression(
-        x: np.ndarray,
-        y: Union[np.ndarray, pd.DataFrame, pd.Series],
+        x: npt.NDArray,
+        y: Union[npt.NDArray, pd.DataFrame, pd.Series],
         intercept: float,
         slope: float,
     ) -> None:
@@ -1533,7 +1541,7 @@ class _BayesianLinReg(_PredictiveModel):
 
     @staticmethod
     def _residual_variance(
-        x: np.ndarray, y: np.ndarray, intercept: float, slope: float
+        x: npt.NDArray, y: npt.NDArray, intercept: float, slope: float
     ) -> float:
         n = len(x)
         assert n == len(y)
@@ -1545,9 +1553,12 @@ class _BayesianLinReg(_PredictiveModel):
 
     @staticmethod
     def _sample_bayesian_linreg(
-        mu_n: np.ndarray, lambda_n: np.ndarray, a_n: float, b_n: float, num_samples: int
-    ) -> Tuple[np.ndarray, np.ndarray]:
-
+        mu_n: npt.NDArray,
+        lambda_n: npt.NDArray,
+        a_n: float,
+        b_n: float,
+        num_samples: int,
+    ) -> Tuple[npt.NDArray, npt.NDArray]:
         # this is to make sure the results are consistent
         # and tests don't break randomly
         seed_value = 100
@@ -1568,8 +1579,8 @@ class _BayesianLinReg(_PredictiveModel):
 
     @staticmethod
     def _compute_bayesian_likelihood(
-        beta: np.ndarray, sigma_squared: np.ndarray, x: np.ndarray, val: float
-    ) -> Tuple[float, np.ndarray]:
+        beta: npt.NDArray, sigma_squared: npt.NDArray, x: npt.NDArray, val: float
+    ) -> Tuple[float, npt.NDArray]:
         prediction = np.matmul(beta, x)
         bayesian_likelihoods = norm.pdf(
             val, loc=prediction, scale=np.sqrt(sigma_squared)
@@ -1579,14 +1590,14 @@ class _BayesianLinReg(_PredictiveModel):
 
     @staticmethod
     def _sample_likelihood(
-        mu_n: np.ndarray,
-        lambda_n: np.ndarray,
+        mu_n: npt.NDArray,
+        lambda_n: npt.NDArray,
         a_n: float,
         b_n: float,
-        x: np.ndarray,
+        x: npt.NDArray,
         val: float,
         num_samples: int,
-    ) -> Tuple[float, np.ndarray, np.ndarray]:
+    ) -> Tuple[float, npt.NDArray, npt.NDArray]:
         (
             all_sample_betas,
             sample_sigma_squared,
@@ -1600,7 +1611,7 @@ class _BayesianLinReg(_PredictiveModel):
 
         return bayesian_likelihoods, prediction, sample_sigma_squared
 
-    def pred_prob(self, t: int, x: float) -> np.ndarray:
+    def pred_prob(self, t: int, x: float) -> npt.NDArray:
         """Predictive probability of a new data point
 
         Args:
@@ -1691,7 +1702,7 @@ class _BayesianLinReg(_PredictiveModel):
 
         return pred_arr
 
-    def pred_mean(self, t: int, x: float) -> np.ndarray:
+    def pred_mean(self, t: int, x: float) -> npt.NDArray:
         """Predicted mean at the next time point.
 
         Args:
@@ -1704,7 +1715,7 @@ class _BayesianLinReg(_PredictiveModel):
 
         return np.asarray(self._mean_arr[t])
 
-    def pred_std(self, t: int, x: float) -> np.ndarray:
+    def pred_std(self, t: int, x: float) -> npt.NDArray:
         """
         predicted standard deviation at the next time point.
         Args:
@@ -1790,7 +1801,7 @@ class _PoissonProcessModel(_PredictiveModel):
 
     def pred_prob(
         self, t: int, x: float
-    ) -> np.ndarray:  # predict the probability that time t, we have value x
+    ) -> npt.NDArray:  # predict the probability that time t, we have value x
         """Predictive log probability of a new data point.
 
         Args:
@@ -1804,7 +1815,7 @@ class _PoissonProcessModel(_PredictiveModel):
         probs = nbinom.logpmf(x, self._n[t], self._p[t])
         return probs
 
-    def pred_mean(self, t: int, x: float) -> np.ndarray:
+    def pred_mean(self, t: int, x: float) -> npt.NDArray:
         """Predicted mean at the next time point.
 
         Args:
@@ -1817,7 +1828,7 @@ class _PoissonProcessModel(_PredictiveModel):
 
         return np.asarray(self._mean_arr[t])
 
-    def pred_std(self, t: int, x: float) -> np.ndarray:
+    def pred_std(self, t: int, x: float) -> npt.NDArray:
         """Predicted std dev  at the next time point.
 
         Args:

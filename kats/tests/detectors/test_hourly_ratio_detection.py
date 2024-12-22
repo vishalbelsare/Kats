@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 from typing import cast, Union
 from unittest import TestCase
 
@@ -47,10 +49,10 @@ class HourlyRatioDectorTest(TestCase):
         df = pd.DataFrame(values, columns=["value"])
         df["time"] = time
         if drop:
+            # pyre-fixme[22]: The cast is redundant.
             df = cast(pd.DataFrame, df.sample(frac=frac, replace=False))
         return TimeSeriesData(df)
 
-    # pyre-ignore[16] Module parameterized.parameterized has no attribute expand.
     @parameterized.expand(
         [  # name, freq, aggregate
             ["valid_hourly_ts", "H", None],
@@ -66,7 +68,6 @@ class HourlyRatioDectorTest(TestCase):
         hr.detector()
         hr.plot()
 
-    # pyre-ignore[16] Module parameterized.parameterized has no attribute expand.
     @parameterized.expand(
         [
             ["invalid_daily_ts"],

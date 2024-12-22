@@ -3,12 +3,16 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import json
 import logging
 from typing import Any, cast, Dict, List, Optional, Tuple, Type, Union
 
 import numpy as np
+import numpy.typing as npt
 import torch
+from kats.compat.compat import Version
 from kats.consts import TimeSeriesData
 from kats.tsfeatures.tsfeatures import TsFeatures
 from numba import jit
@@ -18,6 +22,8 @@ from torch.nn.modules.loss import _Loss
 all_validation_metric_name = ["smape", "sbias", "exceed"]
 
 import pandas as pd
+
+PANDAS_VERSION = Version("pandas")
 
 """
 A module for utility functions of global models, including:
@@ -44,7 +50,7 @@ all_possible_gmfeatures = [
 
 @jit
 # pyre-fixme[2]: Parameter must be annotated.
-def get_filters(isna_idx, seasonality) -> np.ndarray:
+def get_filters(isna_idx, seasonality) -> npt.NDArray:
     """Helper function for adding NaNs to time series.
 
     Args:
@@ -71,7 +77,7 @@ def get_filters(isna_idx, seasonality) -> np.ndarray:
         else:
             i += 1
     filters = np.array([True] * n)
-    for (i, j) in flips:
+    for i, j in flips:
         filters[i:j] = False
     return filters
 
@@ -79,6 +85,7 @@ def get_filters(isna_idx, seasonality) -> np.ndarray:
 def fill_missing_value_na(
     ts: TimeSeriesData,
     seasonality: int,
+    # pyre-fixme[11]: Annotation `Timedelta` is not defined as a type.
     freq: Optional[Union[str, pd.Timedelta]] = None,
 ) -> TimeSeriesData:
     """Padding holes in time series with NaNs, such that the timestamp difference between any two consecute timestamps is either zero or a multipler of seasonality.
@@ -185,9 +192,11 @@ def split(
         split_data = [
             (
                 {t: train_TSs[t] for t in keys[~index[i]]},
-                {t: valid_TSs[t] for t in keys[~index[i]]}
-                if valid_TSs is not None
-                else None,
+                (
+                    {t: valid_TSs[t] for t in keys[~index[i]]}
+                    if valid_TSs is not None
+                    else None
+                ),
             )
             for i in range(splits)
         ]
@@ -195,9 +204,11 @@ def split(
         split_data = [
             (
                 {t: train_TSs[t] for t in keys[index[i]]},
-                {t: valid_TSs[t] for t in keys[index[i]]}
-                if valid_TSs is not None
-                else None,
+                (
+                    {t: valid_TSs[t] for t in keys[index[i]]}
+                    if valid_TSs is not None
+                    else None
+                ),
             )
             for i in range(splits)
         ]
@@ -756,7 +767,6 @@ class AdjustedPinballLoss(_Loss):
         reduction: str = "mean",
         input_log: bool = True,
     ) -> None:
-
         super(AdjustedPinballLoss, self).__init__(
             size_average=None, reduce=None, reduction=reduction
         )
@@ -914,8 +924,8 @@ class GMFeature:
 
     @staticmethod
     def _get_tsfeatures(
-        x: np.ndarray,
-        time: np.ndarray,
+        x: npt.NDArray,
+        time: npt.NDArray,
     ) -> torch.Tensor:
         """
         private method to get Kats tsfeatures
@@ -950,8 +960,8 @@ class GMFeature:
 
     @staticmethod
     def _get_date_feature(
-        x: np.ndarray,
-        time: np.ndarray,
+        x: npt.NDArray,
+        time: npt.NDArray,
     ) -> torch.Tensor:
         """Private method to get simple date features
 
@@ -982,8 +992,8 @@ class GMFeature:
 
     @staticmethod
     def _get_last_date_feature(
-        x: np.ndarray,
-        time: np.ndarray,
+        x: npt.NDArray,
+        time: npt.NDArray,
     ) -> torch.Tensor:
         """Compute date features for the last timestamp."""
         n = len(time)
@@ -992,20 +1002,28 @@ class GMFeature:
         ans = np.zeros(n * m)
         pdt = pd.to_datetime(time[:, -1])
         indices = []
-        # compute day of week indices
-        indices.append(pdt.dayofweek.values + offset)
-        # compute bi-week indices
-        indices.append((pdt.weekofyear.values - 1) // 2 + 7 + offset)
+        if PANDAS_VERSION < "2.0.3":
+            # compute day of week indices
+            indices.append(pdt.dayofweek.values + offset)
+
+            # compute bi-week indices
+            indices.append((pdt.weekofyear.values - 1) // 2 + 7 + offset)
+        else:
+            # compute day of week indices
+            indices.append(pdt.isocalendar().day.values + offset)
+            # compute bi-week indices
+            indices.append((pdt.isocalendar().week.values - 1) // 2 + 7 + offset)
+
         # compute day of month indices
         indices.append(pdt.day.values + 6 + 27 + offset)
         indices = np.concatenate(indices)
-        ans[indices] = 1.0
+        ans[indices.astype(int)] = 1.0
         return torch.tensor(ans.reshape(n, -1), dtype=torch.get_default_dtype())
 
     @staticmethod
     def _get_last_hour_feature(
-        x: np.ndarray,
-        time: np.ndarray,
+        x: npt.NDArray,
+        time: npt.NDArray,
     ) -> torch.Tensor:
         """
         Compute hour features for the last timestamp.
@@ -1019,8 +1037,8 @@ class GMFeature:
 
     @staticmethod
     def _get_last_month_feature(
-        x: np.ndarray,
-        time: np.ndarray,
+        x: npt.NDArray,
+        time: npt.NDArray,
     ) -> torch.Tensor:
         """
         Compute month features for the last timestamp.
@@ -1034,16 +1052,16 @@ class GMFeature:
     @staticmethod
     # pyre-fixme[3]: Return type must be annotated.
     def _get_ts2vec(
-        x: np.ndarray,
-        time: np.ndarray,
+        x: npt.NDArray,
+        time: npt.NDArray,
     ):
         # TODO after ts2vec model lands
         pass
 
     @staticmethod
     def _get_last_hour_minute_feature(
-        x: np.ndarray,
-        time: np.ndarray,
+        x: npt.NDArray,
+        time: npt.NDArray,
     ) -> torch.Tensor:
         """
         Compute minute features for the last timestamp.
@@ -1057,8 +1075,8 @@ class GMFeature:
 
     def get_base_features(
         self,
-        x: np.ndarray,
-        time: np.ndarray,
+        x: npt.NDArray,
+        time: npt.NDArray,
     ) -> Optional[Tensor]:
         """Compute selected base features, i.e., the features to be computed only once for each time series.
 
@@ -1085,8 +1103,8 @@ class GMFeature:
 
     def get_on_the_fly_features(
         self,
-        x: np.ndarray,
-        time: np.ndarray,
+        x: npt.NDArray,
+        time: npt.NDArray,
     ) -> Optional[Tensor]:
         """Compute selected on-the-fly features, i.e., the features to be computed when stepping through RNN.
 
@@ -1153,7 +1171,7 @@ class GMParam:
         validation_metric: Optional; A list of strings representing the names of the error metrics for validation. Default is None, which sets validation_metric as ['smape', 'sbias', 'exceed'].
         batch_size: Optional; A dictionary representing the batch size schedule, whose keys are the epoch numbers and the corresponding values are the batch sizes. Default is None, which sets batch_size as {0:2,3:5,4:15,5:50,6:150,7:500}.
         learning_rate: Optional; A dictionary representing the learning rate schedule, whose keys are epoch numbers and the corresponding values are the learning rates. Default is None, which sets learning_rate as {0: 1e-3, 2: 1e-3/3.}.
-        epoch_num: Optional; An integer representing the totoal number of epoches. Default is 8.
+        epoch_num: Optional; An integer representing the total number of epoches. Default is 8.
         epoch_size: Optional; An integer representing the batches per epoch. Default is 3000.
         init_seasonality: Optional; A list of two floats representing the lower and upper bounds for the initial seasonalities. Default is None, which sets init_seasonality as [0.1, 10.].
         init_smoothing_params: Optional; A list of two floats representing initial values for smoothing parameters, i.e., level smoothing parameter and seasonality smoothing parameter. Default is None, which sets init_smoothing_params as [0.4, 0.6].
@@ -1205,7 +1223,6 @@ class GMParam:
         jit: bool = False,
         gmname: Optional[str] = None,
     ) -> None:
-
         self._valid_freq(freq)
 
         self.model_type: str = self._valid_model_type(model_type)
@@ -1500,7 +1517,6 @@ class GMParam:
 
     # pyre-fixme[2]: Parameter must be annotated.
     def _valid_gmfeature(self, gmfeature, input_window) -> None:
-
         if gmfeature is None:
             self.gmfeature = None
             return
@@ -1552,6 +1568,7 @@ def gmparam_from_string(gmstring: str) -> GMParam:
         }
     gmparam = GMParam(**gmparam_dict)
     return gmparam
+
 
 # pyre-fixme[3]: Return annotation cannot contain `Any`.
 def gmpreprocess(
@@ -1666,8 +1683,13 @@ def pad_ts(ts: TimeSeriesData, n: int, freq: pd.Timedelta) -> TimeSeriesData:
     val_col = [col for col in df.columns if col != time_col][0]
     pad_val = df[val_col].values[df[val_col].first_valid_index()]
     # add the padding value
-    df = df.append(
-        {time_col: df[time_col].iloc[0] - n * freq, val_col: pad_val},
+    df = pd.concat(
+        [
+            df,
+            pd.DataFrame(
+                [{time_col: df[time_col].iloc[0] - n * freq, val_col: pad_val}]
+            ),
+        ],
         ignore_index=True,
     )
     return TimeSeriesData(df)

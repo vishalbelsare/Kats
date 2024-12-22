@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """Ensemble models with weighted average individual models
 
 Assume we have k base models, after we make forecasts with each individual
@@ -10,6 +12,7 @@ model, we learn the weights for each individual model based on corresponding
 back testing results, i.e., model with better performance should have higher
 weight.
 """
+
 import logging
 import sys
 from multiprocessing import cpu_count, Pool

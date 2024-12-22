@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 from __future__ import annotations
 
 import logging
@@ -11,6 +13,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Type, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 try:
@@ -19,7 +22,13 @@ try:
     _no_mk = False
 except ImportError:
     _no_mk = True
-from kats.consts import TimeSeriesChangePoint, TimeSeriesData
+from kats.consts import (
+    DataError,
+    InternalError,
+    ParameterError,
+    TimeSeriesChangePoint,
+    TimeSeriesData,
+)
 from kats.detectors.detector import Detector
 from statsmodels.tsa.api import SimpleExpSmoothing
 
@@ -31,6 +40,13 @@ detectors based on the original MK Test and the Multivariate MK Test.  Neither
 detector has any distribution requirement for the data, but there should not be
 any serial correlation.
 """
+
+SEASON_FREQ_MAP: Dict[str, int] = {
+    "daily": 1,
+    "weekly": 7,
+    "monthly": 30,
+    "yearly": 365,
+}
 
 
 class MKChangePoint(TimeSeriesChangePoint):
@@ -54,6 +70,7 @@ class MKChangePoint(TimeSeriesChangePoint):
 
     def __init__(
         self,
+        # pyre-fixme[11]: Annotation `Timestamp` is not defined as a type.
         start_time: pd.Timestamp,
         end_time: pd.Timestamp,
         confidence: float,
@@ -175,8 +192,7 @@ class MKDetector(Detector):
         if freq is None:
             return ts  # no seasonality
         else:
-            map = {"weekly": 7, "monthly": 30, "yearly": 365}
-            ts = ts.rolling(window=map[freq]).mean()
+            ts = ts.rolling(window=SEASON_FREQ_MAP[freq]).mean()
         return ts
 
     def _smoothing(self, ts: pd.DataFrame) -> pd.DataFrame:
@@ -205,7 +221,7 @@ class MKDetector(Detector):
 
         return smoothed_ts
 
-    def _preprocessing(self, ts: pd.DataFrame) -> Tuple[np.ndarray, int]:
+    def _preprocessing(self, ts: pd.DataFrame) -> Tuple[npt.NDArray, int]:
         """Check and convert the dataframe ts to an numpy array.
 
         Args:
@@ -229,11 +245,11 @@ class MKDetector(Detector):
                 x = x.flatten()
         else:
             msg = f"dim = 2 is expected but your data has dim = {dim}."
-            raise ValueError(msg)
+            raise DataError(msg)
 
         return x, c
 
-    def _drop_missing_values(self, x: np.ndarray) -> Tuple[np.ndarray, int]:
+    def _drop_missing_values(self, x: npt.NDArray) -> Tuple[npt.NDArray, int]:
         """Drop the missing values in x."""
 
         if x.ndim == 1:  # univariate case with 1-dim array/ shape(n,)
@@ -374,7 +390,7 @@ class MKDetector(Detector):
             direction: string, the direction of the trend to be detected, choose
                 from {"down", "up", "both"}
             freq: str, the type of seasonality shown in the time series,
-                choose from {'weekly','monthly','yearly'}
+                choose from {'daily', 'weekly','monthly','yearly'}
         """
 
         self.window_size = window_size
@@ -391,7 +407,7 @@ class MKDetector(Detector):
             logging.info("Performing trend detection on the whole time series...")
             # check validity of the input value
             if len(ts) < window_size:
-                raise ValueError(
+                raise ParameterError(
                     f"For the whole time series analysis, data must have at "
                     f"least window_size={window_size} points."
                 )
@@ -404,13 +420,13 @@ class MKDetector(Detector):
 
             # check validity of the input value
             if training_days < window_size:
-                raise ValueError(
+                raise ParameterError(
                     f"For the anchor date analysis, training days should have "
                     f"at least window_size={window_size} points."
                 )
 
             if len(ts) < training_days:
-                raise ValueError(
+                raise ParameterError(
                     f"For the anchor date analysis, data must have "
                     f"at least training_days={training_days} points."
                 )
@@ -426,9 +442,8 @@ class MKDetector(Detector):
             ts_deseas = self._remove_seasonality(ts, freq=self.freq)
             ts_smoothed = self._smoothing(ts_deseas)  # smoothing
             # append MK statistics to MK_statistics dataframe
-            MK_statistics = MK_statistics.append(
-                # pyre-ignore[6]: Expected `Union[Dict[Union[int, str], typing.Any], L...
-                self.runDetector(ts=ts_smoothed),
+            MK_statistics = pd.concat(
+                [MK_statistics, pd.DataFrame([self.runDetector(ts=ts_smoothed)])],
                 ignore_index=True,
             )
 
@@ -443,9 +458,8 @@ class MKDetector(Detector):
                 # look back window_size day for trend detection
                 ts_tmp = ts_smoothed.loc[:t, :]
                 # append MK statistics to MK_statistics dataframe
-                MK_statistics = MK_statistics.append(
-                    # pyre-ignore[6]: Expected `Union[Dict[Union[int, str], typing.Any...
-                    self.runDetector(ts=ts_tmp),
+                MK_statistics = pd.concat(
+                    [MK_statistics, pd.DataFrame([self.runDetector(ts=ts_tmp)])],
                     ignore_index=True,
                 )
 
@@ -464,7 +478,9 @@ class MKDetector(Detector):
         """Obtain a subset of MK_statistics given the desired direction"""
 
         if direction not in ["up", "down", "both"]:
-            raise ValueError("direction should be chosen from {'up', 'down', 'both'}")
+            raise ParameterError(
+                "direction should be chosen from {'up', 'down', 'both'}"
+            )
 
         if self.multivariate:
             trend_df = pd.DataFrame.from_dict(list(MK_statistics.trend_direction))
@@ -515,7 +531,7 @@ class MKDetector(Detector):
         """Get the dataframe of MK_statistics."""
         MK_statistics = self.MK_statistics
         if MK_statistics is None:
-            raise ValueError("Call detector() first.")
+            raise InternalError("Call detector() first.")
         return MK_statistics
 
     def get_top_k_metrics(
@@ -606,7 +622,7 @@ class MKDetector(Detector):
 
     def _metrics_analysis(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
         if not self.multivariate:
-            raise ValueError("Your data is not multivariate.")
+            raise DataError("Your data is not multivariate.")
         MK_statistics = self.MK_statistics
         assert MK_statistics is not None
 
@@ -621,6 +637,7 @@ class MKDetector(Detector):
 
         return Tau_df, trend_df
 
+    # pyre-fixme[14]: `plot` overrides method defined in `Detector` inconsistently.
     def plot(
         self,
         detected_time_points: Sequence[MKChangePoint],
@@ -639,7 +656,7 @@ class MKDetector(Detector):
         """
         ts = self.ts
         if ts is None:
-            raise ValueError("detector() must be called before plot()")
+            raise InternalError("detector() must be called before plot()")
 
         with pd.option_context("plotting.matplotlib.register_converters", True):
             if ax is None:
