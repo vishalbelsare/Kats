@@ -3,14 +3,14 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 from unittest import TestCase
 
 import numpy as np
 import pandas as pd
 from kats.consts import TimeSeriesData
-from kats.detectors.threshold_detector import (
-    StaticThresholdModel,
-)
+from kats.detectors.threshold_detector import StaticThresholdModel
 
 
 class TestStaticThresholdModel(TestCase):

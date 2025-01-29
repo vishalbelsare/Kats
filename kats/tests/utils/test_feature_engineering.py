@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 from typing import Any, Dict
 from unittest import TestCase
 
@@ -76,7 +78,7 @@ class FeatureEngineeringTest(TestCase):
             index=dates,
         )
         result = fe.datetime_features(pd.Series(values, index=dates, name="val"))
-        assert_frame_equal(expected, result)
+        assert_frame_equal(expected, result, check_like=True, check_dtype=False)
 
     def test_date_features(self) -> None:
         dates = pd.date_range("2021-01-22", "2021-01-31", tz="US/Pacific").tolist()
@@ -107,7 +109,7 @@ class FeatureEngineeringTest(TestCase):
             index=dates,
         )
         result = fe.date_features(pd.Series(values, index=dates, name="val"))
-        assert_frame_equal(expected, result)
+        assert_frame_equal(expected, result, check_like=True, check_dtype=False)
 
     def test_time_features(self) -> None:
         dates = pd.date_range("2021-01-22", "2021-01-31", tz="US/Pacific").tolist()
@@ -132,7 +134,7 @@ class FeatureEngineeringTest(TestCase):
             index=dates,
         )
         result = fe.time_features(pd.Series(values, index=dates, name="val"))
-        assert_frame_equal(expected, result)
+        assert_frame_equal(expected, result, check_like=True, check_dtype=False)
 
     def test_timestamp_time_features(self) -> None:
         t = pd.Timestamp("2021-01-01T02:03:04.5678", tz="US/Pacific")

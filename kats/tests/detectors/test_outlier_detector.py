@@ -3,7 +3,10 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import random
+from typing import cast
 from unittest import TestCase
 
 import numpy as np
@@ -54,13 +57,27 @@ class TestOutlierDetectorModel(TestCase):
 
     def test_response_shape_with_historical_data(self) -> None:
         single_ts = TimeSeriesData(self.data)
-        historical_ts = TimeSeriesData(self.data)
-        single_ts.time = single_ts.time + pd.tseries.offsets.DateOffset(
-            months=len(self.data)
-        )
-        response = self.outlier_detector.fit_predict(single_ts, historical_ts)
+        split_point = len(single_ts) // 2
+        ts = single_ts[split_point:]
+        historical_ts = single_ts[:split_point]
+        response = self.outlier_detector.fit_predict(ts, historical_ts)
 
-        self.assertTrue(np.array_equal(response.scores.time, single_ts.time))
+        self.assertTrue(np.array_equal(response.scores.time, ts.time))
+        self.assertTrue(
+            np.array_equal(cast(TimeSeriesData, response.predicted_ts).time, ts.time)
+        )
+
+        response_with_interpolate = self.outlier_detector.fit_predict(
+            ts, historical_ts, interpolate=True
+        )
+
+        self.assertTrue(np.array_equal(response_with_interpolate.scores.time, ts.time))
+        self.assertTrue(
+            np.array_equal(
+                cast(TimeSeriesData, response_with_interpolate.predicted_ts).time,
+                ts.time,
+            )
+        )
 
     def test_pmm_use_case(self) -> None:
         random.seed(100)
@@ -97,15 +114,14 @@ class TestOutlierDetectorModel(TestCase):
 
     def test_remover_usecase(self) -> None:
         # manually add outlier on the date of '1950-12-01'
-        self.data.loc[self.data.time == '1950-12-01','y']*=5
+        self.data.loc[self.data.time == "1950-12-01", "y"] *= 5
         # manually add outlier on the date of '1959-12-01'
-        self.data.loc[self.data.time == '1959-12-01','y']*=4
+        self.data.loc[self.data.time == "1959-12-01", "y"] *= 4
 
         single_ts = TimeSeriesData(self.data)
 
-
         response_with_interpolate = self.outlier_detector.fit_predict(
-            single_ts, historical_ts=None, interpolate=True
+            single_ts, historical_data=None, interpolate=True
         )
 
         response_with_no_interpolate = self.outlier_detector.fit_predict(
@@ -117,13 +133,29 @@ class TestOutlierDetectorModel(TestCase):
             data=single_ts, historical_data=None
         )
 
-        # pyre-fixme[16]: Optional type has no attribute `value`.
-        self.assertEqual(response_with_interpolate.predicted_ts.time.shape, single_ts.time.shape)
-        # pyre-fixme[16]: Optional type has no attribute `value`.
-        self.assertEqual(response_with_interpolate.predicted_ts.value.shape, single_ts.value.shape)
+        self.assertEqual(
+            # pyre-fixme[16]: Optional type has no attribute `time`.
+            response_with_interpolate.predicted_ts.time.shape,
+            single_ts.time.shape,
+        )
+        self.assertEqual(
+            # pyre-fixme[16]: Optional type has no attribute `value`.
+            response_with_interpolate.predicted_ts.value.shape,
+            single_ts.value.shape,
+        )
 
-        self.assertEqual(response_with_no_interpolate.predicted_ts.time.shape, single_ts.time.shape)
-        self.assertEqual(response_with_no_interpolate.predicted_ts.value.shape, single_ts.value.shape)
+        self.assertEqual(
+            response_with_no_interpolate.predicted_ts.time.shape, single_ts.time.shape
+        )
+        self.assertEqual(
+            response_with_no_interpolate.predicted_ts.value.shape, single_ts.value.shape
+        )
 
-        self.assertEqual(response_with_default_interpolate.predicted_ts.time.shape, single_ts.time.shape)
-        self.assertEqual(response_with_default_interpolate.predicted_ts.value.shape, single_ts.value.shape)
+        self.assertEqual(
+            response_with_default_interpolate.predicted_ts.time.shape,
+            single_ts.time.shape,
+        )
+        self.assertEqual(
+            response_with_default_interpolate.predicted_ts.value.shape,
+            single_ts.value.shape,
+        )

@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import unittest
 from unittest import TestCase
 
@@ -21,7 +23,7 @@ class DataValidationTest(TestCase):
             [["1900-01-01", 2], ["2020-01-01", 2]], columns=["time", "y"]
         )
         DATA = self.TSData.to_dataframe()
-        data_with_extra_point = DATA.copy().append(extra_point)
+        data_with_extra_point = pd.concat([DATA.copy(), extra_point])
 
         tsData_with_missing_point = TimeSeriesData(data_with_extra_point)
 

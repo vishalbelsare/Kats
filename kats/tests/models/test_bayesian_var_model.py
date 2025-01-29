@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import unittest
 from unittest import TestCase
 
@@ -14,7 +16,6 @@ from kats.compat.pandas import assert_frame_equal
 from kats.consts import TimeSeriesData
 from kats.data.utils import load_data
 from kats.models.bayesian_var import BayesianVAR, BayesianVARParams
-from parameterized.parameterized import parameterized
 
 
 class testBayesianVARModel(TestCase):
@@ -142,32 +143,25 @@ class testBayesianVARModel(TestCase):
         # fmt: on
         assert_frame_equal(expected, m.sigma_u)
 
-    # pyre-fixme[56]: Pyre was not able to infer the type of the decorator
-    #  `parameterized.parameterized.parameterized.expand([("zero_p", 0, 1, 1, 1, 1),
-    #  ("zero_phi_0", 1, 0, 1, 1, 1), ("zero_phi_1", 1, 1, 0, 1, 1), ("large_phi_1", 1,
-    #  1, 2, 1, 1), ("zero_phi_2", 1, 1, 1, 0, 1), ("zero_phi_3", 1, 1, 1, 1, 0)])`.
-    @parameterized.expand(
-        [
-            ("zero_p", 0, 1, 1, 1, 1),
-            ("zero_phi_0", 1, 0, 1, 1, 1),
-            ("zero_phi_1", 1, 1, 0, 1, 1),
-            ("large_phi_1", 1, 1, 2, 1, 1),
-            ("zero_phi_2", 1, 1, 1, 0, 1),
-            ("zero_phi_3", 1, 1, 1, 1, 0),
-        ]
-    )
     def test_bad_params(
-        # pyre-fixme[2]: Parameter must be annotated.
-        self, name, p: int, phi0: float, phi1: float, phi2: float, phi3: float
+        self,
     ) -> None:
-        params = BayesianVARParams()
-        params.p = p
-        params.phi_0 = phi0
-        params.phi_1 = phi1
-        params.phi_2 = phi2
-        params.phi_3 = phi3
-        with self.assertRaises(ValueError):
-            params.validate_params()
+        for p, phi0, phi1, phi2, phi3 in [
+            (0, 1, 1, 1, 1),
+            (1, 0, 1, 1, 1),
+            (1, 1, 0, 1, 1),
+            (1, 1, 2, 1, 1),
+            (1, 1, 1, 0, 1),
+            (1, 1, 1, 1, 0),
+        ]:
+            params = BayesianVARParams()
+            params.p = p
+            params.phi_0 = phi0
+            params.phi_1 = phi1
+            params.phi_2 = phi2
+            params.phi_3 = phi3
+            with self.assertRaises(ValueError):
+                params.validate_params()
 
 
 if __name__ == "__main__":

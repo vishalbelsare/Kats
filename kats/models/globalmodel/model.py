@@ -3,27 +3,27 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import collections
 import logging
-from typing import List, Optional, Union, Callable, Any, Tuple, Dict, Generator
+from typing import Any, Callable, Dict, Generator, List, Optional, Tuple, Union
 
 import joblib
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import torch
 import torch.nn as nn
 from kats.consts import TimeSeriesData
 from kats.metrics import metrics
-from kats.models.globalmodel.data_processor import (
-    GMBatch,
-    GMDataLoader,
-)
+from kats.models.globalmodel.data_processor import GMBatch, GMDataLoader
 from kats.models.globalmodel.utils import (
-    GMParam,
-    DilatedRNNStack,
-    PinballLoss,
     AdjustedPinballLoss,
+    DilatedRNNStack,
+    GMParam,
     gmparam_from_string,
+    PinballLoss,
 )
 from torch import Tensor
 from torch.nn.modules.loss import _Loss
@@ -55,7 +55,6 @@ class GMModel:
 
     # pyre-fixme[3]: Return type must be annotated.
     def __init__(self, params: GMParam):
-
         if not isinstance(params, GMParam):
             msg = f"params should be a GMParam object but receives {type(params)}."
             logging.error(msg)
@@ -321,7 +320,6 @@ class GMModel:
         x_t = xi_t / anchor_level
 
         if period > 1:
-
             input_season = torch.cat(seasonality[idx - input_window : idx], dim=1)
             x_t = x_t / input_season
 
@@ -457,8 +455,10 @@ class GMModel:
                 # update RNN
                 trainer.zero_grad()
                 avg_train_loss = sum(train_loss) / len_quantile
+                # pyre-fixme[16]: `float` has no attribute `backward`.
                 avg_train_loss.backward()
                 trainer.step()
+                # pyre-fixme[16]: `float` has no attribute `detach`.
                 train_loss_track += avg_train_loss.detach().numpy()
 
                 # record training_info
@@ -509,9 +509,9 @@ class GMModel:
         # pyre-fixme[2]: Parameter annotation cannot contain `Any`.
         ids: List[Any],
         # pyre-fixme[2]: Parameter annotation cannot contain `Any`.
-        fcst_store: Dict[Any, List[np.ndarray]],
+        fcst_store: Dict[Any, List[npt.NDArray]],
         steps: int,
-        first_time: np.ndarray,
+        first_time: npt.NDArray,
     ) -> Dict[Any, pd.DataFrame]:
         """
         Helper function for transforming raw forecast data into pd.DataFrame.
@@ -542,17 +542,15 @@ class GMModel:
             actual = np.column_stack(fcst_store["actual"])[:, :steps]
 
         for i, idx in enumerate(ids):
-
             df = pd.DataFrame(
-                fcst[i].transpose()[
-                    :steps,
-                ],
+                fcst[i].transpose()[:steps,],
                 columns=cols,
             )
             df["time"] = pd.date_range(
                 first_time[i], freq=self.params.freq, periods=steps
             )
             if "actual" in fcst_store:
+                # pyre-fixme[61]: `actual` is undefined, or not always defined.
                 df["actual"] = actual[i]
             ans[idx] = df
         return ans
@@ -567,7 +565,7 @@ class GMModel:
         steps: int,
         test_batch_size: int = 500,
         raw: bool = False,
-    ) -> Dict[Any, Union[pd.DataFrame, List[np.ndarray]]]:
+    ) -> Dict[Any, Union[pd.DataFrame, List[npt.NDArray]]]:
         """Generate forecasts for target time series.
 
         Args:
@@ -606,7 +604,6 @@ class GMModel:
         self._set_nn_status("test")
         fcst_collects = {}
         for i in range(m):
-
             self._reset_nn_states()
 
             ids = dl.get_batch(batch_size)
@@ -650,12 +647,12 @@ class GMModel:
         info = {
             "gmparam_string": self.params.to_string(),
             "state_dict": self.rnn.state_dict() if self.rnn is not None else None,
-            "encoder_state_dict": self.encoder.state_dict()
-            if self.encoder is not None
-            else None,
-            "decoder_state_dict": self.decoder.state_dict()
-            if self.decoder is not None
-            else None,
+            "encoder_state_dict": (
+                self.encoder.state_dict() if self.encoder is not None else None
+            ),
+            "decoder_state_dict": (
+                self.decoder.state_dict() if self.decoder is not None else None
+            ),
         }
         with open(file_name, "wb") as f:
             joblib.dump(info, f)
@@ -927,7 +924,7 @@ class GMModel:
             tmp = test_valid_TSs[k].value.values
             tmp_step = len(tmp) // fcst_window + int(len(tmp) % fcst_window != 0)
             tmp_fcst_length = tmp_step * fcst_window
-            actuals = np.full(tmp_fcst_length, np.nan, np.float)
+            actuals = np.full(tmp_fcst_length, np.nan, float)
             actuals[: len(tmp)] = tmp
             for j in range(tmp_step):
                 tmp_actuals = actuals[j * fcst_window : (j + 1) * fcst_window]
@@ -1082,7 +1079,6 @@ class GMModel:
         prev_idx = 0
 
         while cur_step < total_step_num:
-
             cur_idx = batch.indices[cur_step]
             is_valid = cur_idx >= first_valid_idx
 
@@ -1098,7 +1094,11 @@ class GMModel:
                 cur_step + 1
             )
 
-            (x_t, anchor_level, x_lt,) = self._process_s2s(
+            (
+                x_t,
+                anchor_level,
+                x_lt,
+            ) = self._process_s2s(
                 prev_idx, cur_idx, batch.x, x_lt, period, params.input_window
             )
 
@@ -1120,8 +1120,7 @@ class GMModel:
             self._valid_tensor(tmp_encode, "encoder_output")
 
             if training_mode or is_valid:
-
-                # pyre-fixme
+                # pyre-fixme[29]: `Union[Module, Tensor]` is not a function.
                 encoder.prepare_decoder(decoder)
                 encoder_step = (
                     batch.training_encoder_step_num

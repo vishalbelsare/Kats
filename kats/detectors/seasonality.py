@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """This module is for seasonality detection.
 
 We provide two seasonality detector: ACFDetector and FFTDetector. ACFDetector uses
@@ -32,6 +34,7 @@ import pandas as pd
 try:
     import plotly.graph_objs as go
 
+    # pyre-fixme[5]: Global expression must be annotated.
     Figure = go.Figure
 except ImportError:
     Figure = object
@@ -226,6 +229,7 @@ class FFTDetector(Detector):
             "seasonalities": selected_seasonalities,
         }
 
+    # pyre-fixme[14]: `plot` overrides method defined in `Detector` inconsistently.
     def plot(
         self,
         time_unit: str,
@@ -233,6 +237,7 @@ class FFTDetector(Detector):
         title: str = "FFT",
         mad_threshold: float = 6.0,
         **kwargs: Any,
+        # pyre-fixme[11]: Annotation `Figure` is not defined as a type.
     ) -> Figure:
         """Plots an FFT plot as a plotly figure
 
@@ -295,7 +300,9 @@ class FFTDetector(Detector):
         pos_fft = fft.loc[fft["ampl"] > 0]
         median = pos_fft["ampl"].median()
         pos_fft_above_med = pos_fft[pos_fft["ampl"] > median]
-        mad = pos_fft_above_med["ampl"].mad()
+        mad = (
+            (pos_fft_above_med["ampl"] - pos_fft_above_med["ampl"].mean()).abs().mean()
+        )
 
         threshold = median + mad * mad_threshold
 

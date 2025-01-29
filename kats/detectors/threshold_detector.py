@@ -3,15 +3,17 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-from typing import Optional, Any
+# pyre-strict
+
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
-from fbprophet import Prophet
-from fbprophet.serialize import model_from_json, model_to_json
 from kats.consts import DEFAULT_VALUE_NAME, TimeSeriesData
 from kats.detectors.detector import DetectorModel
 from kats.detectors.detector_consts import AnomalyResponse
+from prophet import Prophet
+from prophet.serialize import model_from_json, model_to_json
 
 
 class StaticThresholdModel(DetectorModel):

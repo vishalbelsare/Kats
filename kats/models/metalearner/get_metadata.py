@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """A module for computing the meta-data of time series.
 
 This module contains the class for computing the meta-data of time series. The meta-data of a time series is consists of three parts: 1) time series features;
@@ -11,9 +13,10 @@ This module contains the class for computing the meta-data of time series. The m
 
 import ast
 import logging
+from dataclasses import dataclass
 from multiprocessing import cpu_count
 from multiprocessing.pool import ThreadPool
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, List, Tuple, Union
 
 import kats.utils.time_series_parameter_tuning as tpt
 import numpy as np
@@ -49,6 +52,15 @@ candidate_params = {
 
 # Constant to indicate error types supported
 ALLOWED_ERRORS = ["mape", "smape", "mae", "mase", "mse", "rmse"]
+
+
+@dataclass
+class GetMetaDataVal:
+    hpt_res: Dict[str, Any]
+    features: Union[Dict[str, float], List[Dict[str, float]]]
+    best_model: str
+    search_method: str
+    error_method: str
 
 
 class GetMetaData:
@@ -208,7 +220,7 @@ class GetMetaData:
         # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         single_model: Callable,
         # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
-        single_params: Callable
+        single_params: Callable,
         # pyre-fixme[24]: Generic type `dict` expects 2 type parameters, use
         #  `typing.Dict` to avoid runtime subscripting errors.
     ) -> Tuple[Dict, float]:
@@ -286,18 +298,21 @@ class GetMetaData:
 
     def get_meta_data(
         self,
-        **kwargs: Any,
-    ) -> Dict[str, Any]:
+        **tsfeatures_kwargs: Any,
+    ) -> GetMetaDataVal:
         """Get meta data, as well as search method and type of error metric
 
         Meta data includes time series features, best hyper-params for each candidate models, and best model.
+
+        Args:
+            tsfeatures_kwargs: keyword arguments for TsFeatures.
 
         Returns:
             A dictionary storing the best hyper-parameters and the errors for each candidate model, the features of the time series data, the hyper-parameter searching method,
             the error metric used for model evaluation and the corresponding best model.
         """
 
-        features_dict = TsFeatures(**kwargs).transform(self.data)
+        features_dict = TsFeatures(**tsfeatures_kwargs).transform(self.data)
 
         # feature contains nan, pass
         # pyre-fixme[16]: `List` has no attribute `values`.
@@ -322,13 +337,13 @@ class GetMetaData:
         else:
             local_method = "Others"
 
-        return {
-            "hpt_res": HPT_res,
-            "features": features_dict,
-            "best_model": label,
-            "search_method": local_method,
-            "error_method": self.error_method,
-        }
+        return GetMetaDataVal(
+            hpt_res=HPT_res,
+            features=features_dict,
+            best_model=label,
+            search_method=local_method,
+            error_method=self.error_method,
+        )
 
     # pyre-fixme[3]: Return type must be annotated.
     def __str__(self):

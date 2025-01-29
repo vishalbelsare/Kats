@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 
 """Apply LSTM for time series forecasting.
 
@@ -20,6 +22,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -118,9 +121,9 @@ class LSTMModel(Model[LSTMParams]):
     model: Optional[LSTMForecast] = None
     freq: Optional[str] = None
     dates: Optional[pd.DatetimeIndex] = None
-    y_fcst: Optional[np.ndarray] = None
-    y_fcst_lower: Optional[np.ndarray] = None
-    y_fcst_upper: Optional[np.ndarray] = None
+    y_fcst: Optional[npt.NDArray] = None
+    y_fcst_lower: Optional[npt.NDArray] = None
+    y_fcst_upper: Optional[npt.NDArray] = None
     fcst_df: Optional[pd.DataFrame] = None
 
     def __init__(self, data: TimeSeriesData, params: LSTMParams) -> None:
@@ -221,6 +224,7 @@ class LSTMModel(Model[LSTMParams]):
         return self
 
     # pyre-fixme[15]: `predict` overrides method defined in `Model` inconsistently.
+    # pyre-fixme[14]: `predict` overrides method defined in `Model` inconsistently.
     def predict(self, steps: int, *args: Any, **kwargs: Any) -> pd.DataFrame:
         """Prediction function for a multi-step forecast
 

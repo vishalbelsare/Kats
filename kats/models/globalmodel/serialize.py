@@ -3,15 +3,16 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import json
 import logging
 from multiprocessing import cpu_count
-from typing import Union, Dict, Any
+from typing import Any, Dict, Union
 
 from kats.models.globalmodel.ensemble import GMEnsemble
 from kats.models.globalmodel.model import GMModel
-from kats.models.globalmodel.utils import GMParam
-from kats.models.globalmodel.utils import gmparam_from_string
+from kats.models.globalmodel.utils import GMParam, gmparam_from_string
 from torch import Tensor
 
 
@@ -76,7 +77,6 @@ def global_model_to_json(gme: Union[GMModel, GMEnsemble]) -> str:
 
 
 def load_global_model_from_json(json_str: str) -> Union[GMModel, GMEnsemble]:
-
     param_dict = json.loads(json_str)
 
     # string for GMEnsemble

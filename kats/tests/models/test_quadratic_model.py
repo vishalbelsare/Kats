@@ -3,15 +3,14 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import unittest
 from unittest import TestCase
 
 from kats.consts import TimeSeriesData
-from kats.data.utils import load_data, load_air_passengers
-from kats.models.quadratic_model import (
-    QuadraticModel,
-    QuadraticModelParams,
-)
+from kats.data.utils import load_air_passengers, load_data
+from kats.models.quadratic_model import QuadraticModel, QuadraticModelParams
 
 
 class QuadraticModelTest(TestCase):

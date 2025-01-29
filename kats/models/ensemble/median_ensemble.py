@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """Median ensembling method
 
 Ensemble models with median of individual models
@@ -57,8 +59,9 @@ class MedianEnsembleModel(ensemble.BaseEnsemble):
         """
 
         logging.debug(
-            "Call predict() with parameters. "
-            "steps:{steps}, kwargs:{kwargs}".format(steps=steps, kwargs=kwargs)
+            "Call predict() with parameters. " "steps:{steps}, kwargs:{kwargs}".format(
+                steps=steps, kwargs=kwargs
+            )
         )
         # Keep freq in the parameters passed to _predict_all()
         self.freq = freq = kwargs.get("freq", "D")

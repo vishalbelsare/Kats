@@ -3,9 +3,12 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 from typing import Any, cast, Dict, Optional, Union
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 
@@ -58,7 +61,7 @@ _DAYTIME_MAP = {
 }
 
 
-def _map(index: Union[np.ndarray, pd.Int64Index], map: Dict[int, int]) -> np.ndarray:
+def _map(index: Union[npt.NDArray, pd.Int64Index], map: Dict[int, int]) -> npt.NDArray:
     """Map values to other values efficiently.
 
     Args:
@@ -90,17 +93,25 @@ def date_features(s: pd.Series, result: Optional[pd.DataFrame] = None) -> pd.Dat
         result = pd.DataFrame(s, copy=False)
     index = cast(pd.DatetimeIndex, s.index)
 
+    # pyre-fixme[16]: `DatetimeIndex` has no attribute `year`.
     result["year"] = index.year
+    # pyre-fixme[16]: `DatetimeIndex` has no attribute `month`.
     result["month"] = index.month
+    # pyre-fixme[16]: `DatetimeIndex` has no attribute `day`.
     result["day"] = index.day
+    # pyre-fixme[16]: `DatetimeIndex` has no attribute `dayofweek`.
     result["dayofweek"] = index.dayofweek
+    # pyre-fixme[16]: `DatetimeIndex` has no attribute `dayofyear`.
     result["dayofyear"] = index.dayofyear
+    # pyre-fixme[16]: `DatetimeIndex` has no attribute `quarter`.
     result["quarter"] = index.quarter
     result["season"] = _map(index.month, _SEASON_MAP)
+    # pyre-fixme[16]: `DatetimeIndex` has no attribute `weekofyear`.
     result["weekofyear"] = index.weekofyear
     try:
         # Work around numpy Deprecation Warning about parsing timezones
         # by converting to UTC and removing the tz info.
+        # pyre-fixme[16]: `DatetimeIndex` has no attribute `tz_convert`.
         dates = index.tz_convert(None).to_numpy()
     except TypeError:
         # No timezone.
@@ -111,8 +122,10 @@ def date_features(s: pd.Series, result: Optional[pd.DataFrame] = None) -> pd.Dat
     # result["is_holiday"] = ?
     # result["holiday_types"] = ?
     result["is_weekend"] = index.dayofweek >= 5
+    # pyre-fixme[16]: `DatetimeIndex` has no attribute `is_leap_year`.
     result["is_leap_year"] = index.is_leap_year
     result["is_leap_day"] = (index.month == 2) & (index.day == 29)
+    # pyre-fixme[16]: `DatetimeIndex` has no attribute `is_month_end`.
     result["is_month_end"] = index.is_month_end
     result["is_quarter_end"] = index.is_month_end & (index.month % 4 == 3)
 
@@ -134,11 +147,16 @@ def time_features(s: pd.Series, result: Optional[pd.DataFrame] = None) -> pd.Dat
         result = pd.DataFrame(s, copy=False)
     index = cast(pd.DatetimeIndex, s.index)
 
+    # pyre-fixme[16]: `DatetimeIndex` has no attribute `hour`.
     result["hour"] = index.hour
+    # pyre-fixme[16]: `DatetimeIndex` has no attribute `minute`.
     result["minute"] = index.minute
+    # pyre-fixme[16]: `DatetimeIndex` has no attribute `second`.
     result["second"] = index.second
+    # pyre-fixme[16]: `DatetimeIndex` has no attribute `microsecond`.
     result["milliseconds"] = index.microsecond / 1000
     result["quarterhour"] = index.minute // 15 + 1
+    # pyre-fixme[16]: `DatetimeIndex` has no attribute `dayofweek`.
     result["hourofweek"] = index.dayofweek * 24 + index.hour
     result["daytime"] = _map(index.hour, _DAYTIME_MAP)
 
@@ -175,6 +193,7 @@ def datetime_features(
     return time_features(s, result)
 
 
+# pyre-fixme[11]: Annotation `Timestamp` is not defined as a type.
 def timestamp_datetime_features(t: pd.Timestamp) -> Dict[str, Any]:
     """Compute date/time features for a single timestamp.
 

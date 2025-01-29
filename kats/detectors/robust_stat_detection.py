@@ -3,13 +3,16 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import logging
-from typing import Any, Sequence
+from typing import Any, Optional, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
-from kats.consts import TimeSeriesData, TimeSeriesChangePoint
+from kats.consts import TimeSeriesChangePoint, TimeSeriesData
 from kats.detectors.detector import Detector
 from scipy.stats import norm, zscore  # @manual
 
@@ -17,6 +20,7 @@ from scipy.stats import norm, zscore  # @manual
 class RobustStatChangePoint(TimeSeriesChangePoint):
     def __init__(
         self,
+        # pyre-fixme[11]: Annotation `Timestamp` is not defined as a type.
         start_time: pd.Timestamp,
         end_time: pd.Timestamp,
         confidence: float,
@@ -45,6 +49,7 @@ class RobustStatDetector(Detector):
             )
             logging.error(msg)
             raise ValueError(msg)
+        self.zscore: Optional[npt.NDArray] = None
 
     # pyre-fixme[14]: `detector` overrides method defined in `Detector` inconsistently.
     def detector(
@@ -70,6 +75,7 @@ class RobustStatDetector(Detector):
         )
 
         y_zscores = zscore(df_)
+        self.zscore = y_zscores
         p_values = norm.sf(np.abs(y_zscores))
         ind = np.where(p_values < p_value_cutoff)[0]
 
@@ -97,6 +103,7 @@ class RobustStatDetector(Detector):
 
         return change_points
 
+    # pyre-fixme[14]: `plot` overrides method defined in `Detector` inconsistently.
     def plot(
         self, change_points: Sequence[RobustStatChangePoint], **kwargs: Any
     ) -> plt.Axes:

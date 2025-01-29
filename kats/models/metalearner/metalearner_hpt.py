@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """A module for meta-learner hyper-parameter selection.
 
 This module contains two classes, including:
@@ -12,11 +14,13 @@ This module contains two classes, including:
 
 import collections
 import logging
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import joblib
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -24,21 +28,57 @@ from kats.consts import TimeSeriesData
 from kats.tsfeatures.tsfeatures import TsFeatures
 from sklearn.model_selection import train_test_split
 
-# pyre-fixme[5]: Global expression must be annotated.
-default_model_params = {
-    "holtwinters": {
-        "categorical_idx": ["trend", "damped", "seasonal", "seasonal_periods"],
-        "numerical_idx": [],
-    },
-    "arima": {"categorical_idx": ["p", "d", "q"], "numerical_idx": []},
-    "sarima": {
-        "categorical_idx": ["seasonal_order", "trend", "p", "d", "q"],
-        "numerical_idx": [],
-    },
-    "theta": {"categorical_idx": ["m"], "numerical_idx": []},
-    "stlf": {"categorical_idx": ["method", "m"], "numerical_idx": []},
-    "prophet": {
-        "categorical_idx": [
+_MODELS = {
+    "prophet",
+    "arima",
+    "sarima",
+    "holtwinters",
+    "stlf",
+    "theta",
+    "cusum",
+    "statsig",
+}
+
+logging.basicConfig()
+LOGGER: logging.Logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DefaultModelParams:
+    holtwinters_categorical_idx: List[str] = field(default_factory=list)
+    holtwinters_numerical_idx: List[str] = field(default_factory=list)
+    arima_categorical_idx: List[str] = field(default_factory=list)
+    arima_numerical_idx: List[str] = field(default_factory=list)
+    sarima_categorical_idx: List[str] = field(default_factory=list)
+    sarima_numerical_idx: List[str] = field(default_factory=list)
+    theta_categorical_idx: List[str] = field(default_factory=list)
+    theta_numerical_idx: List[str] = field(default_factory=list)
+    stlf_categorical_idx: List[str] = field(default_factory=list)
+    stlf_numerical_idx: List[str] = field(default_factory=list)
+    prophet_categorical_idx: List[str] = field(default_factory=list)
+    prophet_numerical_idx: List[str] = field(default_factory=list)
+    cusum_categorical_idx: List[str] = field(default_factory=list)
+    cusum_numerical_idx: List[str] = field(default_factory=list)
+    statsig_categorical_idx: List[str] = field(default_factory=list)
+    statsig_numerical_idx: List[str] = field(default_factory=list)
+
+    def __init__(self) -> None:
+        self.holtwinters_categorical_idx = [
+            "trend",
+            "damped",
+            "seasonal",
+            "seasonal_periods",
+        ]
+        self.holtwinters_numerical_idx = []
+        self.arima_categorical_idx = ["p", "d", "q"]
+        self.arima_numerical_idx = []
+        self.sarima_categorical_idx = ["seasonal_order", "trend", "p", "d", "q"]
+        self.sarima_numerical_idx = []
+        self.theta_categorical_idx = ["m"]
+        self.theta_numerical_idx = []
+        self.stlf_categorical_idx = ["method", "m"]
+        self.stlf_numerical_idx = []
+        self.prophet_categorical_idx = [
             "yearly_seasonality",
             "weekly_seasonality",
             "daily_seasonality",
@@ -46,62 +86,74 @@ default_model_params = {
             "seasonality_prior_scale",
             "changepoint_prior_scale",
             "changepoint_range",
-        ],
-        "numerical_idx": [],
-    },
-    "cusum": {
-        "categorical_idx": ["score_func"],
-        "numerical_idx": ["delta_std_ratio", "scan_window", "historical_window"],
-    },
-    "statsig": {
-        "categorical_idx": [],
-        "numerical_idx": ["n_control", "n_test"],
-    },
-}
+        ]
+        self.prophet_numerical_idx = []
+        self.cusum_categorical_idx = ["score_func"]
+        self.cusum_numerical_idx = [
+            "delta_std_ratio",
+            "scan_window",
+            "historical_window",
+        ]
+        self.statsig_categorical_idx = []
+        self.statsig_numerical_idx = ["n_control", "n_test"]
 
-# pyre-fixme[5]: Global expression must be annotated.
-default_model_networks = {
-    "holtwinters": {
-        "n_hidden_shared": [20],
-        "n_hidden_cat_combo": [[2], [3], [5], [3]],
-        "n_hidden_num": [],
-    },
-    "arima": {
-        "n_hidden_shared": [40],
-        "n_hidden_cat_combo": [[5], [5], [5]],
-        "n_hidden_num": [],
-    },
-    "sarima": {
-        "n_hidden_shared": [40],
-        "n_hidden_cat_combo": [[5], [5], [5], [5], [5]],
-        "n_hidden_num": [],
-    },
-    "theta": {"n_hidden_shared": [40], "n_hidden_cat_combo": [[5]], "n_hidden_num": []},
-    "stlf": {
-        "n_hidden_shared": [20],
-        "n_hidden_cat_combo": [[5], [5]],
-        "n_hidden_num": [],
-    },
-    "prophet": {
-        "n_hidden_shared": [40],
-        "n_hidden_cat_combo": [[5], [5], [2], [3], [5], [5], [5]],
-        "n_hidden_num": [],
-    },
-    "cusum": {
-        "n_hidden_shared": [20],
-        "n_hidden_cat_combo": [[3]],
-        "n_hidden_num": [5, 5, 5],
-    },
-    "statsig": {
-        "n_hidden_shared": [20],
-        "n_hidden_cat_combo": [],
-        "n_hidden_num": [5, 5],
-    },
-}
+
+@dataclass
+class DefaultModelNetworks:
+    holtwinters_n_hidden_shared: List[int] = field(default_factory=list)
+    holtwinters_n_hidden_cat_combo: List[List[int]] = field(default_factory=list)
+    holtwinters_n_hidden_num: List[int] = field(default_factory=list)
+    arima_n_hidden_shared: List[int] = field(default_factory=list)
+    arima_n_hidden_cat_combo: List[List[int]] = field(default_factory=list)
+    arima_n_hidden_num: List[int] = field(default_factory=list)
+    sarima_n_hidden_shared: List[int] = field(default_factory=list)
+    sarima_n_hidden_cat_combo: List[List[int]] = field(default_factory=list)
+    sarima_n_hidden_num: List[int] = field(default_factory=list)
+    theta_n_hidden_shared: List[int] = field(default_factory=list)
+    theta_n_hidden_cat_combo: List[List[int]] = field(default_factory=list)
+    theta_n_hidden_num: List[int] = field(default_factory=list)
+    stlf_n_hidden_shared: List[int] = field(default_factory=list)
+    stlf_n_hidden_cat_combo: List[List[int]] = field(default_factory=list)
+    stlf_n_hidden_num: List[int] = field(default_factory=list)
+    prophet_n_hidden_shared: List[int] = field(default_factory=list)
+    prophet_n_hidden_cat_combo: List[List[int]] = field(default_factory=list)
+    prophet_n_hidden_num: List[int] = field(default_factory=list)
+    cusum_n_hidden_shared: List[int] = field(default_factory=list)
+    cusum_n_hidden_cat_combo: List[List[int]] = field(default_factory=list)
+    cusum_n_hidden_num: List[int] = field(default_factory=list)
+    statsig_n_hidden_shared: List[int] = field(default_factory=list)
+    statsig_n_hidden_cat_combo: List[List[int]] = field(default_factory=list)
+    statsig_n_hidden_num: List[int] = field(default_factory=list)
+
+    def __init__(self) -> None:
+        self.holtwinters_n_hidden_shared = [20]
+        self.holtwinters_n_hidden_cat_combo = [[2], [3], [5], [3]]
+        self.holtwinters_n_hidden_num = []
+        self.arima_n_hidden_shared = [40]
+        self.arima_n_hidden_cat_combo = [[5], [5], [5]]
+        self.arima_n_hidden_num = []
+        self.sarima_n_hidden_shared = [40]
+        self.sarima_n_hidden_cat_combo = [[5], [5], [5], [5], [5]]
+        self.sarima_n_hidden_num = []
+        self.theta_n_hidden_shared = [40]
+        self.theta_n_hidden_cat_combo = [[5]]
+        self.theta_n_hidden_num = []
+        self.stlf_n_hidden_shared = [20]
+        self.stlf_n_hidden_cat_combo = [[5], [5]]
+        self.stlf_n_hidden_num = []
+        self.prophet_n_hidden_shared = [40]
+        self.prophet_n_hidden_cat_combo = [[5], [5], [2], [3], [5], [5], [5]]
+        self.prophet_n_hidden_num = []
+        self.cusum_n_hidden_shared = [20]
+        self.cusum_n_hidden_cat_combo = [[3]]
+        self.cusum_n_hidden_num = [5, 5, 5]
+        self.statsig_n_hidden_shared = [20]
+        self.statsig_n_hidden_cat_combo = []
+        self.statsig_n_hidden_num = [5, 5]
 
 
 def _log_error(msg: str) -> ValueError:
-    logging.error(msg)
+    LOGGER.error(msg)
     return ValueError(msg)
 
 
@@ -172,8 +224,9 @@ class MetaLearnHPT:
             # pyre-fixme[4]: Attribute must be annotated.
             self.__default_model = default_model
 
-            if default_model is not None:
+            default_model_params = DefaultModelParams()
 
+            if default_model is not None:
                 if (categorical_idx is not None) or (numerical_idx is not None):
                     msg = """
                          Default model cannot accept customized categorical_idx or customized numerical_idx! Please set
@@ -182,12 +235,11 @@ class MetaLearnHPT:
                          """
                     raise _log_error(msg)
 
-                if default_model in default_model_params:
-                    categorical_idx = default_model_params[default_model][
-                        "categorical_idx"
-                    ]
-                    numerical_idx = default_model_params[default_model]["numerical_idx"]
-
+                if default_model in _MODELS:
+                    categorical_idx_var = f"{default_model}_categorical_idx"
+                    numerical_idx_var = f"{default_model}_numerical_idx"
+                    categorical_idx = getattr(default_model_params, categorical_idx_var)
+                    numerical_idx = getattr(default_model_params, numerical_idx_var)
                 else:
                     msg = f"default_model={default_model} is not available! Please choose one from 'prophet', 'arima', 'sarima', 'holtwinters', 'stlf', 'theta', 'cusum', 'statsig'"
                     raise _log_error(msg)
@@ -208,7 +260,7 @@ class MetaLearnHPT:
             )
             # pyre-fixme[4]: Attribute must be annotated.
             self._dim_output_num = (
-                self._target_num.shape[1] if self.numerical_idx else 0
+                self._target_num.shape[1] if self._target_num is not None else 0
             )
             self._get_target_cat()
             self._validate_data()
@@ -335,25 +387,26 @@ class MetaLearnHPT:
         )
 
         default_model = self.__default_model
-
+        default_model_networks = DefaultModelNetworks()
         if default_model is not None:
             if not network_structure:
                 msg = f"A default model structure ({default_model}) is initiated and cannot accept the customized network structure!"
                 raise _log_error(msg)
 
-            if default_model in default_model_networks:
-                n_hidden_shared = default_model_networks[default_model][
-                    "n_hidden_shared"
-                ]
-                n_hidden_cat_combo = default_model_networks[default_model][
-                    "n_hidden_cat_combo"
-                ]
-                n_hidden_num = default_model_networks[default_model]["n_hidden_num"]
+            if default_model in _MODELS:
+                n_hidden_shared_var = f"{default_model}_n_hidden_shared"
+                n_hidden_cat_combo_var = f"{default_model}_n_hidden_cat_combo"
+                n_hidden_num_var = f"{default_model}_n_hidden_num"
+                n_hidden_shared = getattr(default_model_networks, n_hidden_shared_var)
+                n_hidden_cat_combo = getattr(
+                    default_model_networks, n_hidden_cat_combo_var
+                )
+                n_hidden_num = getattr(default_model_networks, n_hidden_num_var)
             else:
                 msg = f"Default neural network for model {default_model} is not implemented!"
                 raise _log_error(msg)
             msg = f"Default neural network for model {default_model} is built."
-            logging.info(msg)
+            LOGGER.info(msg)
         elif n_hidden_shared is None:
             msg = "n_hidden_shared is missing!"
             raise _log_error(msg)
@@ -563,15 +616,21 @@ class MetaLearnHPT:
 
             # check early stopping condition
             if epoch > 20 and epochs_no_improve >= n_epochs_stop:
-                logging.info(f"Early stopping! Stop at epoch {epoch + 1}.")
+                LOGGER.info(f"Early stopping! Stop at epoch {epoch + 1}.")
                 break
 
-    def pred(self, source_ts: TimeSeriesData, ts_scale: bool = True) -> pd.DataFrame:
+    def pred(
+        self,
+        source_ts: TimeSeriesData,
+        ts_scale: bool = True,
+        **tsfeatures_kwargs: Any,
+    ) -> pd.DataFrame:
         """Predict hyper-parameters for a new time series data.
 
         Args:
             source_ts: :class:`kats.consts.TimeSeriesData` object representing the time series for which to generate hyper-parameters
             ts_scale: A boolean to specify whether or not to rescale time series data (i.e., divide its value by its maximum value) before calculating its features. Default is True.
+            **tsfeatures_kwargs: keyword arguments for TsFeatures.
 
         Returns:
             A `pandas.DataFrame` object storing the recommended hyper-parameters.
@@ -588,15 +647,15 @@ class MetaLearnHPT:
             # scale time series to make ts features more stable
             ts.value /= ts.value.max()
             msg = "Successful scaled! Each value of TS has been divided by the max value of TS."
-            logging.info(msg)
+            LOGGER.info(msg)
 
         self.model.eval()
-        new_feature = TsFeatures().transform(ts)
+        new_feature = TsFeatures(**tsfeatures_kwargs).transform(ts)
         # pyre-fixme[16]: `List` has no attribute `values`.
         new_feature_vector = np.asarray(list(new_feature.values()))
 
         if np.any(np.isnan(new_feature_vector)):
-            logging.warning(
+            LOGGER.warning(
                 "Time series features contain NaNs!"
                 f"Time series features are {new_feature}. "
                 "Fill in NaNs with 0."
@@ -618,7 +677,7 @@ class MetaLearnHPT:
         return res
 
     def pred_by_feature(
-        self, source_x: Union[np.ndarray, List[np.ndarray], pd.DataFrame]
+        self, source_x: Union[npt.NDArray, List[npt.NDArray], pd.DataFrame]
     ) -> List[Dict[str, Any]]:
         """Predict hyper-parameters for time series features.
 
@@ -682,7 +741,7 @@ class MetaLearnHPT:
             raise _log_error("Haven't trained a model.")
         else:
             joblib.dump(self.__dict__, file_path)
-            logging.info("Successfully saved the trained model!")
+            LOGGER.info("Successfully saved the trained model!")
 
     def load_model(self, file_path: str) -> None:
         """Load a pre-trained model from a binary.

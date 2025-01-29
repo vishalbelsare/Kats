@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import logging
 from typing import Any, Generic, Optional, Tuple, TypeVar
 
@@ -75,7 +77,7 @@ class Model(Generic[ParamsType]):
         self,
         ax: Optional[plt.Axes] = None,
         figsize: Optional[Tuple[int, int]] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> plt.Axes:
         """Plot method for forecasting models
 

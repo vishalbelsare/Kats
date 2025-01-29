@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """
 This file defines the BackTester classes for Kats.
 
@@ -20,18 +22,350 @@ rolling windows.
 For more information, check out the Kats tutorial notebook on backtesting!
 """
 
+import copy
 import logging
 import multiprocessing as mp
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, Type, TYPE_CHECKING
+from dataclasses import dataclass
+from functools import partial
+from multiprocessing import cpu_count
+from multiprocessing.dummy import Pool
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    TYPE_CHECKING,
+    Union,
+)
+
+try:
+    from typing import Protocol
+except ImportError:  # pragma: no cover
+    from typing_extensions import Protocol  # pragma: no cover
+
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
-from kats.consts import Params, TimeSeriesData
+from kats.consts import _log_error, Params, TimeSeriesData
 from kats.metrics.metrics import core_metric, CoreMetric
+
+from kats.utils.datapartition import DataPartitionBase
 
 if TYPE_CHECKING:
     from kats.models.model import Model
+
+
+DataPartition = Union[
+    List[TimeSeriesData],
+    Dict[Union[int, str], TimeSeriesData],
+    TimeSeriesData,
+]
+
+
+@dataclass
+class BacktesterResult:
+    # all raw evaluation results
+    raw_errors: Optional[List[pd.DataFrame]]
+    # error metrics of each split
+    fold_errors: List[Optional[Dict[str, List[float]]]]
+    # summary error metrics
+    summary_errors: Optional[Dict[str, float]]
+
+
+class Forecaster(Protocol):
+    def __call__(
+        self, train: DataPartition, test: DataPartition
+    ) -> pd.DataFrame: ...  # pragma: no cover
+
+    """
+    Function of fitting a forecasting model with `train` and evaluate the fitted model on `test`.
+    Return a pd.DataFrame containing the information for computing evaluation metrics.
+    """
+
+
+class Scorer(Protocol):
+    def __call__(
+        self, result: pd.DataFrame
+    ) -> Dict[str, float]: ...  # pragma: no cover
+
+    """Function for calculating evaluation metrics based on `result`.
+    """
+
+
+def _check_max_core(max_core: Optional[int]) -> int:
+    """Helper function for validating core number for multi-processing."""
+
+    total_cores = cpu_count()
+    if isinstance(max_core, int) and max_core > 0 and max_core < total_cores:
+        core_num = max_core
+    else:
+        core_num = max((total_cores - 1) // 2, 1)
+        logging.warning(
+            f"Input `max_core` = {max_core} is invalid, setting `max_core` = {core_num} instead."
+        )
+    return core_num
+
+
+def _get_scorer(
+    scorer: Union[str, List[str], CoreMetric],
+) -> Optional[Callable[[pd.DataFrame], Dict[str, float]]]:
+    """Helper function for validating `scorer`."""
+
+    if isinstance(scorer, str):
+        scorer = [scorer]
+    if isinstance(scorer, list):
+        methods = []
+        for error in scorer:
+            try:
+                methods.append((error, core_metric(error)))
+            except Exception as e:
+                msg = f"Unsupported error function {error} with error message {e}."
+                _log_error(msg)
+
+        # define scorer function
+        # pyre-fixme Incompatible return type [7]: Expected `Optional[typing.Callable[[DataFrame], Dict[str, float]]]` but got `Union[Metric, MultiOutputMetric, WeightedMetric]`.
+        def calc_error(result: pd.DataFrame) -> Dict[str, float]:
+            errors = {}
+            for name, func in methods:
+                errors[name] = func(result["y"].values, result["fcst"].values)
+            return errors
+
+        return calc_error
+
+    elif callable(scorer):
+        # pyre-fixme Incompatible return type [7]: Expected `Optional[typing.Callable[[DataFrame], Dict[str, float]]]` but got `Union[Metric, MultiOutputMetric, WeightedMetric]`.
+        return scorer
+
+    msg = "Input `scorer` is invalid."
+    _log_error(msg)
+
+
+def kats_units_forecaster(
+    params: Params,
+    # pyre-fixme
+    model_class: Type,
+    train: TimeSeriesData,
+    test: TimeSeriesData,
+) -> Optional[pd.DataFrame]:
+    """
+    Forecaster function for uni-time series Kats forecaasting model.
+    """
+    try:
+        model = model_class(data=train, params=params)
+        model.fit()
+        fcst = model.predict(steps=len(test))
+        fcst["y"] = test.value.values
+        return fcst
+    except Exception as e:
+        msg = f"Fail to fit model with `model_class` = {model_class} and `params` = {params} with error message: {e}"
+        logging.warning(msg)
+    return None
+
+
+class GenericBacktester(ABC):
+    """
+    This class defines the module for backtesting for generic forecasting model.
+
+    Attributes:
+        datapartition: a datapartition object defining the data partition logic of backtesting.
+        forecaster: a callable object following protcol `Forecaster`, used for fitting data and generating forecasts.
+        scorer: a strategy to evaluate the performance of forecasting model. Can be a or a list of strings representing the error metrics,
+                or a callable following `Scorer` protocol.
+        summarizer: a string for the method summarizing error metrics. Can be 'average' (i.e., averaged over all splits) or 'weighted' (i.e., weighted averaged by the size of test size). Default is 'average'.
+        raw_errors: a boolean for whether returning raw data on the test sets.
+        fold_errors: a boolean for whether returning the error metrics on the test sets.
+        multi: a boolean for whether using multi-processing.
+        max_core: a integer for the number of cores used by multi-processing. Default is None, which sets `max_core = max((all_available_core-1)//2-1, 1)`.
+        error_score: a float for the substitude of error score if it is np.nan. Default is np.nan.
+
+    Sample Usage:
+        >>> # Define the forecaster
+        >>> fcster = partial(kats_units_forecaster, params=ProphetParams(), model_class=ProphetModel())
+        >>> # Define data partition logict
+        >>> dp = SimpleDataPartition(train_frac = 0.9)
+        >>> # Initiate backtester object
+        >>> gbt = GenericBacktester(datapartition = dp, scorer = ['smape','mape'], forecaster = fcster)
+        >>> ts = TimeSeriesData(pd.read_csv("kats/data/air_passengers.csv"))
+        >>> gbt.run_backtester(ts)
+    """
+
+    def __init__(
+        self,
+        datapartition: DataPartitionBase,
+        forecaster: Forecaster,
+        scorer: Union[str, CoreMetric, List[Union[str, CoreMetric]], Scorer],
+        summarizer: str = "average",
+        raw_errors: bool = True,
+        fold_errors: bool = True,
+        multi: bool = True,
+        max_core: Optional[int] = None,
+        error_score: float = np.nan,
+    ) -> None:
+        self.datapartition: DataPartitionBase = datapartition
+        # pyre-fixme
+        self.scorer: Callable[[pd.DataFrame], Dict[str, float]] = _get_scorer(scorer)
+        self.forecaster = forecaster
+
+        self.raw_errors: bool = raw_errors
+        self.fold_errors: bool = fold_errors
+        self.summarizer: str = summarizer
+        self.backtest_result: Optional[BacktesterResult] = None
+
+        self.multi: bool = multi
+        self.max_core: int = _check_max_core(max_core) if self.multi else 1
+        self.error_score: float = error_score
+
+    def run_backtester(self, data: DataPartition) -> None:
+        train_test_data = self.datapartition.split(data)
+        logging.info("Successfully finish data partitioning!")
+
+        if self.multi:
+            pool = Pool(self.max_core)
+            all_res = pool.starmap(self._fit_and_scorer, train_test_data)
+            pool.close()
+            pool.join()
+        else:
+            all_res = []
+            for train, test in train_test_data:
+                tmp_all_res = self._fit_and_scorer(train, test)
+                all_res.append(tmp_all_res)
+        logging.info("Successfully finish evaluating models on all partitions.")
+        self.backtest_result = self._summarize(all_res)
+        return None
+
+    def _fit_and_scorer(
+        self, train: DataPartition, test: DataPartition
+    ) -> Tuple[Optional[pd.DataFrame], Optional[Dict[str, float]]]:
+        try:
+            res = self.forecaster(train=train, test=test)
+            score = self.scorer(res)
+            return res, score
+        except Exception as e:
+            logging.info(
+                f"Failed to fit model and get evaluation with error message: {e}."
+            )
+            return None, None
+
+    def _get_fold_errors(
+        self, raw_fold_errors: List[Optional[Dict[str, float]]]
+    ) -> Tuple[List[str], List[Dict[str, float]]]:
+        valid_fold_errors = [t for t in raw_fold_errors if t is not None]
+        # get error metric names
+        if not valid_fold_errors:
+            msg = "No valid evaluation available, i.e., every evaluation failed."
+            _log_error(msg)
+
+        error_metrics = list(valid_fold_errors[0].keys())
+        base_error_score = {em: self.error_score for em in error_metrics}
+        fold_errors = []
+        for fd in raw_fold_errors:
+            if fd is None:
+                fold_errors.append(base_error_score)
+            else:
+                fold_errors.append(fd)
+        return error_metrics, fold_errors
+
+    def _summarize(
+        self, results: List[Tuple[pd.DataFrame, Dict[str, float]]]
+    ) -> BacktesterResult:
+        if not results:
+            _log_error("Fail to get evaluation results!")
+
+        raw_errors = [res[0] for res in results]
+        raw_fold_errors = [res[1] for res in results]
+        # get error metric names
+        # pyre-fixme
+        error_metrics, fold_errors = self._get_fold_errors(raw_fold_errors)
+
+        # aggregate error metrics from each fold
+        summary_errors = {}
+        num_fold = len(fold_errors)
+        weight = np.ones(num_fold)
+        if self.summarizer == "weighted":
+            weight = np.array([len(t) for t in raw_errors])
+            weight = weight / np.sum(weight) * num_fold
+        for em in error_metrics:
+            summary_errors[em] = np.nanmean(
+                np.array([t[em] for t in fold_errors]) * weight
+            )
+
+        backtest_res = BacktesterResult(
+            raw_errors=raw_errors if self.raw_errors else None,
+            # pyre-fixme
+            fold_errors=fold_errors if self.fold_errors else None,
+            summary_errors=summary_errors,
+        )
+
+        return backtest_res
+
+    def get_errors(self) -> Optional[BacktesterResult]:
+        if self.backtest_result is not None:
+            return self.backtest_result
+        msg = "Please execute function `run_backtester()` first."
+        _log_error(msg)
+
+
+class KatsSimpleBacktester(GenericBacktester):
+    """
+    Backtester module for single time series Kats forecasting models.
+
+    Attributes:
+        datapartition: a datapartition object defining the data partition logic of backtesting.
+        scorer: a strategy to evaluate the performance of forecasting model. Can be a or a list of strings representing the error metrics,
+                or a callable following `Scorer` protocol.
+        model_params: a parameter object for the parameters of the target forecasting model.
+        model_class: the model class for the target forecasting model.
+        summarizer: a string for the method summarizing error metrics. Can be 'average' (i.e., averaged over all splits) or 'weighted' (i.e., weighted averaged by the size of test size). Default is 'average'.
+        raw_errors: a boolean for whether returning raw data on the test sets.
+        fold_errors: a boolean for whether returning the error metrics on the test sets.
+        multi: a boolean for whether using multi-processing.
+        max_core: a integer for the number of cores used by multi-processing. Default is None, which sets `max_core = max((all_available_core-1)//2-1, 1)`.
+        error_score: a float for the substitude of error score if it is np.nan. Default is np.nan.
+
+    Sample Usage:
+        >>> # Define data partition logict
+        >>> dp = SimpleDataPartition(train_frac = 0.9)
+        >>> # Initiate backtester object
+        >>> ksbt = KatsSimpleBacktester(datapartition = dp, scorer = ['smape','mape'], model_params = ProphetParams(), model_class = ProphetModel)
+        >>> ts = TimeSeriesData(pd.read_csv("kats/data/air_passengers.csv"))
+        >>> ksbt.run_backtester(ts)
+
+    """
+
+    def __init__(
+        self,
+        datapartition: DataPartitionBase,
+        scorer: Union[str, CoreMetric, List[Union[str, CoreMetric]], Scorer],
+        model_params: Params,
+        # pyre-fixme
+        model_class: Type,
+        summarizer: str = "average",
+        raw_errors: bool = True,
+        fold_errors: bool = True,
+        multi: bool = True,
+        max_core: Optional[int] = None,
+        error_score: float = np.nan,
+    ) -> None:
+        fcster = partial(
+            kats_units_forecaster, params=model_params, model_class=model_class
+        )
+        super(KatsSimpleBacktester, self).__init__(
+            datapartition=datapartition,
+            scorer=scorer,
+            # pyre-fixme
+            forecaster=fcster,
+            summarizer=summarizer,
+            raw_errors=raw_errors,
+            fold_errors=fold_errors,
+            multi=multi,
+            max_core=max_core,
+            error_score=error_score,
+        )
 
 
 class BackTesterParent(ABC):
@@ -65,11 +399,11 @@ class BackTesterParent(ABC):
     params: Params
     multi: bool
     offset: int
-    results: List[Tuple[np.ndarray, np.ndarray, "Model[Params]", np.ndarray]]
+    results: List[Tuple[npt.NDArray, npt.NDArray, "Model[Params]", npt.NDArray]]
     errors: Dict[str, float]
     size: int
     freq: Optional[str]
-    raw_errors: List[np.ndarray]
+    raw_errors: List[npt.NDArray]
 
     def __init__(
         self,
@@ -182,7 +516,7 @@ class BackTesterParent(ABC):
         self,
         training_data_indices: Tuple[int, int],
         testing_data_indices: Tuple[int, int],
-    ) -> Optional[Tuple[np.ndarray, np.ndarray, "Model[Params]", np.ndarray]]:
+    ) -> Optional[Tuple[npt.NDArray, npt.NDArray, "Model[Params]", npt.NDArray]]:
         """
         Trains model, evaluates it, and stores results in results list.
         """
@@ -249,9 +583,10 @@ class BackTesterParent(ABC):
             raise ValueError("Not enough testing data")
 
         logging.info("Training model")
-        train_model = self.model_class(data=training_data, params=self.params)
+        train_model = self.model_class(
+            data=copy.deepcopy(training_data), params=self.params
+        )
         train_model.fit()
-
         logging.info("Making forecast prediction")
         fcst = train_model.predict(
             steps=testing_data.value.size + self.offset, freq=self.freq
@@ -278,16 +613,23 @@ class BackTesterParent(ABC):
                 self._create_model(train_split, test_split)
         else:
             pool = mp.Pool(processes=num_splits)
-            futures = [
-                pool.apply_async(self._create_model, args=(train_split, test_split))
-                for train_split, test_split in zip(training_splits, testing_splits)
-            ]
             self.results = results = []
-            for fut in futures:
-                result = fut.get()
-                assert result is not None
-                results.append(result)
-            pool.close()
+            try:
+                futures = [
+                    pool.apply_async(self._create_model, args=(train_split, test_split))
+                    for train_split, test_split in zip(training_splits, testing_splits)
+                ]
+                for fut in futures:
+                    result = fut.get()
+                    assert result is not None
+                    results.append(result)
+            except Exception as e:
+                logging.exception("Error during parallel model evaluation")
+                logging.exception(e)
+                raise e
+            finally:
+                pool.close()
+                pool.join()
 
     def run_backtest(self) -> None:
         """Executes backtest."""
@@ -526,17 +868,17 @@ class BackTesterRollingOrigin(BackTesterParent):
         if start_train_percentage + test_percentage > 100:
             logging.error("Too large combined train and test percentage")
             raise ValueError(  # noqa
-                "Invalid training and testing percentage combination."
+                "Invalid training and testing percentage combination"
             )
         elif start_train_percentage + test_percentage == 100:
             if expanding_steps > 1:
                 logging.error(
                     "Too large combined train and test percentage for "
-                    "%s expanding steps.",
+                    "%s expanding steps",
                     expanding_steps,
                 )
                 raise ValueError(
-                    "Invalid trraining and testing percentage combination "
+                    "Invalid training and testing percentage combination "
                     f"given for {expanding_steps} expanding steps"
                 )
         if expanding_steps < 0:
@@ -883,10 +1225,10 @@ class CrossValidation:
     """
 
     size: int
-    results: List[Tuple[np.ndarray, np.ndarray, "Model[Params]", np.ndarray]]
+    results: List[Tuple[npt.NDArray, npt.NDArray, "Model[Params]", npt.NDArray]]
     num_folds: int
     errors: Dict[str, float]
-    raw_errors: List[np.ndarray]
+    raw_errors: List[npt.NDArray]
     _backtester: BackTesterParent
 
     def __init__(

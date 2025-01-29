@@ -3,18 +3,23 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 from operator import attrgetter
-from typing import Optional
+from typing import List, Optional
 from unittest import TestCase
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from kats.consts import TimeSeriesData
 from kats.detectors.cusum_detection import (
+    CUSUMChangePoint,
     CUSUMDetector,
     MultiCUSUMDetector,
     VectorizedCUSUMDetector,
 )
+
 from parameterized.parameterized import parameterized
 from scipy.stats import chi2  # @manual
 from sklearn.datasets import make_spd_matrix
@@ -94,7 +99,7 @@ class CUSUMDetectorTest(TestCase):
                 self.periodicity * self.total_cycles - 1,
             ],
             magnitude_quantile=1,
-            change_directions=["increase", "decrease"],
+            change_directions="both",
             delta_std_ratio=0,
         )
         self.season_metadata = self.season_inc_trend_change_points[0]
@@ -244,7 +249,7 @@ class CUSUMDetectorTest(TestCase):
         total_cycles: int,
         noise_std: float = 1.0,
         harmonics: Optional[float] = None,
-    ) -> np.ndarray:
+    ) -> npt.NDArray:
         duration = periodicity * total_cycles
         assert duration == int(duration)
         duration = int(duration)
@@ -283,7 +288,10 @@ class CUSUMDetectorTest(TestCase):
 
     def test_seasonality_with_increasing_trend_cp_index(self) -> None:
         self.assertGreaterEqual(
-            self.season_metadata.cp_index, self.periodicity * (self.total_cycles - 1)
+            self.season_metadata.cp_index,
+            # pyre-fixme[6]: For 2nd param expected `SupportsDunderLE[Variable[_T]]`
+            #  but got `int`.
+            self.periodicity * (self.total_cycles - 1),
         )
 
     def test_logging_multivariate_error(self) -> None:
@@ -536,6 +544,9 @@ class VectorizedCUSUMDetectorTest(TestCase):
         self.dec_change_points = CUSUMDetector(
             TimeSeriesData(df[["decrease", "time"]])
         ).detector()
+        self.dec_change_points_int_window = CUSUMDetector(
+            TimeSeriesData(df[["decrease", "time"]])
+        ).detector(change_directions="decrease", interest_window=(35, 55))
 
         timeseries = TimeSeriesData(df)
         change_points_vectorized_ = VectorizedCUSUMDetector(timeseries).detector_()
@@ -551,6 +562,10 @@ class VectorizedCUSUMDetectorTest(TestCase):
         # change points for the second column in the matrix
         self.dec_change_points_vectorized = change_points_vectorized[1]
 
+        self.dec_change_points_vectorized_int_window = VectorizedCUSUMDetector(
+            timeseries
+        ).detector_(change_directions=["decrease"], interest_window=(35, 55))[1]
+
     def test_vectorized_results(self) -> None:
         # check if vectorized CUSUM produces the same results with the original CUSUM
         self.assertEqual(
@@ -558,6 +573,80 @@ class VectorizedCUSUMDetectorTest(TestCase):
             self.inc_change_points_vectorized[0].start_time,
         )
         self.assertEqual(
+            len(self.inc_change_points),
+            len(self.inc_change_points_vectorized),
+        )
+        self.assertEqual(
             self.dec_change_points[0].start_time,
             self.dec_change_points_vectorized[0].start_time,
         )
+        self.assertEqual(
+            len(self.dec_change_points),
+            len(self.dec_change_points_vectorized),
+        )
+        self.assertEqual(
+            self.dec_change_points_int_window[0].start_time,
+            self.dec_change_points_vectorized_int_window[0].start_time,
+        )
+        self.assertEqual(
+            len(self.dec_change_points_int_window),
+            len(self.dec_change_points_vectorized_int_window),
+        )
+
+    def _comp_cpval(
+        self,
+        cps1: List[List[CUSUMChangePoint]],
+        cps2: List[List[CUSUMChangePoint]],
+        round_int: int = 10,
+    ) -> bool:
+        for i in range(len(cps1)):
+            cp1 = cps1[i]
+            cp2 = cps2[i]
+            if len(cp1) != len(cp2):
+                return False
+
+            for j in range(len(cp1)):
+                if cp1[j].almost_equal(cp2[j], round_int):
+                    continue
+                else:
+                    return False
+
+        return True
+
+    def test_vectorized_detector_results(self) -> None:
+        np.random.seed(0)
+        y = pd.DataFrame(
+            {
+                "time": pd.Series(pd.date_range("2019-01-01", "2019-03-01")),
+                "val1": np.random.normal(1, 0.2, 60),
+                "val2": np.random.normal(1, 0.2, 60),
+                "val3": np.random.normal(1, 0.2, 60),
+            }
+        )
+        tsmul = TimeSeriesData(y)
+
+        # interest_window = [20, 50]
+        vcum = VectorizedCUSUMDetector(tsmul)
+        res1 = vcum.detector(interest_window=[20, 50])
+
+        res2 = []
+        for i in range(0, y.shape[1] - 1):
+            ts = TimeSeriesData(y.iloc[:, [0, i + 1]])
+            detector = CUSUMDetector(ts)
+            temp = detector.detector(interest_window=[20, 50])
+            res2.append(temp)
+
+        self.assertTrue(self._comp_cpval(res2, res1, 8))
+
+        # interest_window = None
+        vcum = VectorizedCUSUMDetector(tsmul)
+        res1 = vcum.detector()
+
+        res2 = []
+        for i in range(0, y.shape[1] - 1):
+            ts = TimeSeriesData(y.iloc[:, [0, i + 1]])
+            detector = CUSUMDetector(ts)
+            temp = detector.detector()
+            res2.append(temp)
+
+        self.assertTrue(self._comp_cpval(res2, res1, 8))

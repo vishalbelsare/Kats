@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """VAR forecasting Model
 
 VAR model is a multivariate extension of the univariate autoregressive (AR) model.
@@ -23,6 +25,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from kats.consts import Params, TimeSeriesData
 from kats.models.model import Model
@@ -79,8 +82,8 @@ class VARModel(Model[VARParams]):
 
     model: Optional[VARResults] = None
     k_ar: Optional[int] = None
-    sigma_u: Optional[np.ndarray] = None
-    resid: Optional[np.ndarray] = None
+    sigma_u: Optional[npt.NDArray] = None
+    resid: Optional[npt.NDArray] = None
     freq: Optional[str] = None
     alpha: Optional[float] = None
     dates: Optional[pd.DatetimeIndex] = None
@@ -148,8 +151,9 @@ class VARModel(Model[VARParams]):
             raise ValueError("Call fit() before predict().")
 
         logging.debug(
-            "Call predict() with parameters. "
-            "steps:{steps}, kwargs:{kwargs}".format(steps=steps, kwargs=kwargs)
+            "Call predict() with parameters. " "steps:{steps}, kwargs:{kwargs}".format(
+                steps=steps, kwargs=kwargs
+            )
         )
         self.include_history = include_history
         # pyre-fixme[16]: `Optional` has no attribute `time`.
@@ -236,6 +240,7 @@ class VARModel(Model[VARParams]):
             raise ValueError("VARModel does not support the ax parameter.")
         dates = self.dates
         assert dates is not None
+        # pyre-fixme[16]: `DatetimeIndex` has no attribute `to_pydatetime`.
         fcst_dates = dates.to_pydatetime()
         logging.info("Generating chart for forecast result from VAR model.")
 

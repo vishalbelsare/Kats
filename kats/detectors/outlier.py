@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """
 Module with generic outlier detection models. Supports a univariate algorithm that
 treates each metric separately to identify outliers and a multivariate detection
@@ -20,6 +22,7 @@ from typing import Any, cast, Dict, List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from kats.consts import Params, TimeSeriesData, TimeSeriesIterator
 from kats.detectors.detector import Detector
@@ -59,7 +62,9 @@ class OutlierDetector(Detector):
         self.iqr_mult = iqr_mult
 
     def __clean_ts__(
-        self, original: Union[pd.Series, pd.DataFrame]
+        self,
+        original: Union[pd.Series, pd.DataFrame],
+        # pyre-fixme[11]: Annotation `Timestamp` is not defined as a type.
     ) -> Tuple[List[int], List[float], List[pd.Timestamp]]:
         """
         Performs detection for a single metric. First decomposes the time series
@@ -166,8 +171,8 @@ class MultivariateAnomalyDetector(Detector):
         model_type: The type of multivariate anomaly detector (currently 'BAYESIAN_VAR' and 'VAR' options available)
     """
 
-    resid: Optional[np.ndarray] = None
-    sigma_u: Optional[np.ndarray] = None
+    resid: Optional[npt.NDArray] = None
+    sigma_u: Optional[npt.NDArray] = None
     anomaly_score_df: Optional[pd.DataFrame] = None
 
     def __init__(
@@ -184,10 +189,9 @@ class MultivariateAnomalyDetector(Detector):
         params.validate_params()
         self.params = params
 
-        # pyre-fixme
         time_diff = data.time.sort_values().diff().dropna()
         if len(time_diff.unique()) == 1:  # check constant frequenccy
-            freq = time_diff.unique()[0].astype("int")
+            freq = time_diff.unique().astype("int")[0]
             self.granularity_days: float = freq / (24 * 3600 * (10**9))
         else:
             raise RuntimeError(
@@ -218,7 +222,7 @@ class MultivariateAnomalyDetector(Detector):
         )
         return df_clean
 
-    def _is_pos_def(self, mat: np.ndarray) -> bool:
+    def _is_pos_def(self, mat: npt.NDArray) -> bool:
         """
         Check if matrix is positive definite.
 
@@ -338,7 +342,9 @@ class MultivariateAnomalyDetector(Detector):
             anomaly_scores_t = pd.DataFrame(
                 anomaly_scores_t, index=[fcstTime], copy=False
             )
-            anomaly_score_df = anomaly_score_df.append(anomaly_scores_t)
+            anomaly_score_df = pd.concat(
+                [anomaly_score_df, anomaly_scores_t], axis=0, ignore_index=False
+            )
 
         self.anomaly_score_df = anomaly_score_df
         return anomaly_score_df
@@ -420,6 +426,6 @@ class MultivariateAnomalyDetector(Detector):
         axs[0].plot(a.drop(columns=["overall_anomaly_score"]))
         axs[0].set_title("Input time series metrics")
 
-        a["overall_anomaly_score"].plot(legend=False, ax=axs[1])
+        axs[1].plot(a["overall_anomaly_score"])
         axs[1].set_title("Overall Anomaly Score")
         return axs

@@ -3,15 +3,17 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""
- Bayesian estimation of Vector Autoregressive Model using
- Minnesota prior on the coefficient matrix. This version is
- useful for regularization when they are too many coefficients
- to be estimated.
+# pyre-strict
 
- Implementation inspired by the following two articles/papers:
-    https://www.mathworks.com/help/econ/normalbvarm.html#mw_4a1ab118-9ef3-4380-8c5a-12b848254117
-    http://apps.eui.eu/Personal/Canova/Articles/ch10.pdf (page 5)
+"""
+Bayesian estimation of Vector Autoregressive Model using
+Minnesota prior on the coefficient matrix. This version is
+useful for regularization when they are too many coefficients
+to be estimated.
+
+Implementation inspired by the following two articles/papers:
+   https://www.mathworks.com/help/econ/normalbvarm.html#mw_4a1ab118-9ef3-4380-8c5a-12b848254117
+   http://apps.eui.eu/Personal/Canova/Articles/ch10.pdf (page 5)
 """
 
 import logging
@@ -22,8 +24,10 @@ from typing import Any, Dict, List, Optional, Tuple
 import kats.models.model as m
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from kats.consts import _log_error, Params, TimeSeriesData
+
 from numpy.linalg import inv
 from scipy.linalg import block_diag
 
@@ -77,16 +81,16 @@ class BayesianVAR(m.Model[BayesianVARParams]):
         params: the parameter class defined with `BayesianVARParams`
     """
 
-    sigma_ols: Optional[np.ndarray] = None
-    v_posterior: Optional[np.ndarray] = None
-    mu_posterior: Optional[np.ndarray] = None
+    sigma_ols: Optional[npt.NDArray] = None
+    v_posterior: Optional[npt.NDArray] = None
+    mu_posterior: Optional[npt.NDArray] = None
     resid: Optional[pd.DataFrame] = None
     forecast: Optional[Dict[str, TimeSeriesData]] = None
     forecast_max_time: Optional[datetime] = None
     data: TimeSeriesData
     time_freq: str
-    X: np.ndarray
-    Y: np.ndarray
+    X: npt.NDArray
+    Y: npt.NDArray
     m: int
     T: int
     r: int
@@ -98,7 +102,7 @@ class BayesianVAR(m.Model[BayesianVARParams]):
     N: int
     num_mu_coefficients: int
     fitted: bool = False
-    forecast_vals: Optional[List[np.ndarray]] = None
+    forecast_vals: Optional[List[npt.NDArray]] = None
 
     def __init__(self, data: TimeSeriesData, params: BayesianVARParams) -> None:
         if data.is_univariate():
@@ -146,7 +150,7 @@ class BayesianVAR(m.Model[BayesianVARParams]):
     @staticmethod
     def _convert_timeseries_np(
         timeseries: TimeSeriesData,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> Tuple[npt.NDArray, npt.NDArray]:
         data_df = timeseries.to_dataframe()
         Y = data_df.drop(columns=[timeseries.time_col_name]).to_numpy().T
         X = np.expand_dims(pd.RangeIndex(0, len(timeseries)), axis=0)
@@ -204,11 +208,12 @@ class BayesianVAR(m.Model[BayesianVARParams]):
             ]  # shape: [m * (m * p + r + 1)] x 1
 
             assert (
-                num_mu,
-                num_mu,
-            ) == z_sum_term.shape, (
-                f"Expected {(num_mu, num_mu)}, got {z_sum_term.shape}"
-            )
+                (
+                    num_mu,
+                    num_mu,
+                )
+                == z_sum_term.shape
+            ), f"Expected {(num_mu, num_mu)}, got {z_sum_term.shape}"
             assert (
                 num_mu,
             ) == y_sum_term.shape, f"Expected {(num_mu,)}, got {y_sum_term.shape}"
@@ -235,7 +240,7 @@ class BayesianVAR(m.Model[BayesianVARParams]):
         self.resid = self._get_training_residuals()
         self.fitted = True
 
-    def _construct_z(self, X: np.ndarray, Y: np.ndarray, t: int) -> np.ndarray:
+    def _construct_z(self, X: npt.NDArray, Y: npt.NDArray, t: int) -> npt.NDArray:
         assert t >= self.p, f"Need t={t} >= p={self.p}."
         assert self.r == X.shape[0]
         assert self.m == Y.shape[0]
@@ -249,20 +254,21 @@ class BayesianVAR(m.Model[BayesianVARParams]):
 
         return z
 
-    def _construct_Zt(self, X: np.ndarray, Y: np.ndarray, t: int) -> np.ndarray:
+    def _construct_Zt(self, X: npt.NDArray, Y: npt.NDArray, t: int) -> npt.NDArray:
         z = self._construct_z(X, Y, t)
         Z_t = block_diag(*([z] * self.m))
 
         assert (
-            self.m,
-            self.num_mu_coefficients,
-        ) == Z_t.shape, (
-            f"Expected {(self.m, self.num_mu_coefficients)}, got {Z_t.shape}"
-        )
+            (
+                self.m,
+                self.num_mu_coefficients,
+            )
+            == Z_t.shape
+        ), f"Expected {(self.m, self.num_mu_coefficients)}, got {Z_t.shape}"
 
         return Z_t  # shape: m x [m * (m * p + m + 1)]
 
-    def _construct_X_OLS(self) -> np.ndarray:
+    def _construct_X_OLS(self) -> npt.NDArray:
         X_OLS = np.zeros((self.N, self.T - self.p))
 
         for t in range(self.p, self.T):
@@ -272,7 +278,7 @@ class BayesianVAR(m.Model[BayesianVARParams]):
 
         return X_OLS
 
-    def _compute_sigma_ols(self) -> np.ndarray:
+    def _compute_sigma_ols(self) -> npt.NDArray:
         Y_suffix = self.Y[:, self.p :]
         X_OLS = self._construct_X_OLS()
 
@@ -294,7 +300,7 @@ class BayesianVAR(m.Model[BayesianVARParams]):
         i: int,
         j: Optional[int],
         lag: Optional[int],
-        variance: np.ndarray,
+        variance: npt.NDArray,
         is_exogenous: bool,
     ) -> float:
         """
@@ -313,7 +319,7 @@ class BayesianVAR(m.Model[BayesianVARParams]):
             assert lag is not None
             return self.phi_0 * (self.phi_1 / h(lag)) * (variance[j] / variance[i])
 
-    def _construct_v_prior(self) -> np.ndarray:
+    def _construct_v_prior(self) -> npt.NDArray:
         num_mu = self.num_mu_coefficients
         cov = np.zeros((num_mu, num_mu))
 
@@ -348,8 +354,8 @@ class BayesianVAR(m.Model[BayesianVARParams]):
         return cov  # shape: [m * (m * p + r + 1)] x [m * (m * p + r + 1)] matrix
 
     def _evaluate_point_t(
-        self, X_new: np.ndarray, Y_new: np.ndarray, t: int
-    ) -> np.ndarray:
+        self, X_new: npt.NDArray, Y_new: npt.NDArray, t: int
+    ) -> npt.NDArray:
         assert t >= self.p, f"Need t={t} > p={self.p}."
 
         Z_t = self._construct_Zt(X_new, Y_new, t)
@@ -359,7 +365,9 @@ class BayesianVAR(m.Model[BayesianVARParams]):
 
         return point_prediction
 
-    def _look_ahead_step(self, X_ahead: np.ndarray, Y_curr: np.ndarray) -> np.ndarray:
+    def _look_ahead_step(
+        self, X_ahead: npt.NDArray, Y_curr: npt.NDArray
+    ) -> npt.NDArray:
         # Y_curr has one less element than X_ahead
         assert Y_curr.shape[1] + 1 == X_ahead.shape[1]
         t_ahead = X_ahead.shape[1] - 1  # -1 for 0-indexed array
@@ -434,7 +442,7 @@ class BayesianVAR(m.Model[BayesianVARParams]):
                     [Y_curr, look_ahead_pred[:, np.newaxis]], axis=1
                 )
 
-            times += ahead_times
+            times += list(ahead_times)
 
         forecast_length = len(times)
 

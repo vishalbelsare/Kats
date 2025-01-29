@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +13,7 @@ from typing import cast, List, Optional, Tuple, Union
 
 import attr
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from kats.consts import TimeSeriesData
 from scipy.stats import norm, t, ttest_ind  # @manual
@@ -185,12 +188,13 @@ class PercentageChange:
                     we will transform this long univariate TS into a multi-variate TS and then use multistatsig detector instead.
                     In this case, we should skip rescaling p-values.
         use_corrected_scores: bool, default value is False, using original t-scores or correct t-scores.
+        min_perc_change: float, minimum percentage change, for a non zero score. Score will be clipped to zero if the absolute value of the percentage chenge is less than this value
     """
 
-    upper: Optional[Union[float, np.ndarray]]
-    lower: Optional[Union[float, np.ndarray]]
-    _t_score: Optional[Union[float, np.ndarray]]
-    _p_value: Optional[Union[float, np.ndarray]]
+    upper: Optional[Union[float, npt.NDArray]]
+    lower: Optional[Union[float, npt.NDArray]]
+    _t_score: Optional[Union[float, npt.NDArray]]
+    _p_value: Optional[Union[float, npt.NDArray]]
     num_series: int
 
     def __init__(
@@ -200,6 +204,7 @@ class PercentageChange:
         method: str = "fdr_bh",
         skip_rescaling: bool = False,
         use_corrected_scores: bool = False,
+        min_perc_change: float = 0.0,
     ) -> None:
         self.current = current
         self.previous = previous
@@ -217,9 +222,10 @@ class PercentageChange:
 
         # 2 t scores strategies
         self.use_corrected_scores = use_corrected_scores
+        self.min_perc_change = min_perc_change
 
     @property
-    def ratio_estimate(self) -> Union[float, np.ndarray]:
+    def ratio_estimate(self) -> Union[float, npt.NDArray]:
         # pyre-ignore[6]: Expected float for 1st positional only parameter to call float.__truediv__ but got Union[float, np.ndarray].
         return self.current.mean_val / self.previous.mean_val
 
@@ -255,10 +261,12 @@ class PercentageChange:
         if self.num_series > 1:
             return np.array(
                 [
-                    False
-                    if cast(np.ndarray, self.upper)[i] > 1.0
-                    and cast(np.ndarray, self.lower)[i] < 1
-                    else True
+                    (
+                        False
+                        if cast(np.ndarray, self.upper)[i] > 1.0
+                        and cast(np.ndarray, self.lower)[i] < 1
+                        else True
+                    )
                     for i in range(self.current.num_series)
                 ]
             )
@@ -272,7 +280,18 @@ class PercentageChange:
     def score(self) -> float:
         if self._t_score is None:
             self._ttest()
-        return cast(float, self._t_score)
+
+        t_score = self._t_score
+
+        if self.num_series == 1:
+            if np.abs(self.perc_change) < self.min_perc_change:
+                t_score = 0.0
+        else:
+            t_score = np.where(
+                np.abs(self.perc_change) < self.min_perc_change, 0, t_score
+            )
+
+        return cast(float, t_score)
 
     @property
     def p_value(self) -> float:
@@ -281,11 +300,11 @@ class PercentageChange:
         return cast(float, self._p_value)
 
     @property
-    def mean_previous(self) -> Union[float, np.ndarray]:
+    def mean_previous(self) -> Union[float, npt.NDArray]:
         return self.previous.mean_val
 
     @property
-    def mean_difference(self) -> Union[float, np.ndarray]:
+    def mean_difference(self) -> Union[float, npt.NDArray]:
         # pyre-ignore[6]: Expected `float` for 1st param but got `Union[float,
         #  np.ndarray]`.
         _mean_diff = self.current.mean_val - self.previous.mean_val
@@ -333,7 +352,9 @@ class PercentageChange:
         n_1 = len(self.previous)
         n_2 = len(self.current)
 
-        if n_1 == 0 or n_2 == 0:
+        # Require both populations to be nonempty, and their sum larger than 2, because the
+        # t-test has (n_1 + n_2 - 2) degrees of freedom.
+        if n_1 == 0 or n_2 == 0 or (n_1 == n_2 == 1):
             return 0.0
 
         # pyre-ignore[58]: * is not supported for operand types int and Union[float, np.ndarray].
@@ -371,11 +392,12 @@ class PercentageChange:
         n_1 = len(self.previous)
         n_2 = len(self.current)
 
-        # if both control and test have one value
-        # then using a t test does not make any sense
-        if n_1 == 1 and n_2 == 1:
-            self._t_score = np.inf
+        # if both control and test have one value, then using a t test does not make any sense
+        # Return nan, which is the same as scipy's ttest_ind
+        if n_1 == n_2 == 1:
+            self._t_score = np.nan
             self._p_value = 0.0
+            return
 
         # when sample size is 1, scipy's t test gives nan,
         # hence we separately handle this case
@@ -429,8 +451,8 @@ class PercentageChange:
         self._t_score = np.zeros(num_series)
         # We are using a two-sided test here, so we take inverse_tcdf(self._p_value / 2) with df = len(self.current) + len(self.previous) - 2
 
-        _t_score: np.ndarray = self._t_score
-        _p_value: np.ndarray = cast(np.ndarray, self._p_value)
+        _t_score: npt.NDArray = self._t_score
+        _p_value: npt.NDArray = cast(np.ndarray, self._p_value)
         for i in range(self.current.num_series):
             if t_value_start[i] < 0:
                 _t_score[i] = t.ppf(_p_value[i] / 2, self._get_df())
@@ -496,7 +518,6 @@ class ConfidenceBand:
 
 
 class AnomalyResponse:
-
     key_mapping: List[str]
     num_series: int
 
@@ -555,12 +576,14 @@ class AnomalyResponse:
     def _update_ts_slice(
         self, ts: TimeSeriesData, time: datetime, value: Union[float, ArrayLike]
     ) -> TimeSeriesData:
-        time = ts.time.iloc[1:].append(pd.Series(time, copy=False))
-        time.reset_index(drop=True, inplace=True)
+        time_df = pd.concat([ts.time.iloc[1:], pd.Series(time, copy=False)])
+        time_df.reset_index(drop=True, inplace=True)
         if self.num_series == 1:
-            value = ts.value.iloc[1:].append(pd.Series(value, copy=False))
-            value.reset_index(drop=True, inplace=True)
-            return TimeSeriesData(time=time, value=value)
+            value_df = pd.concat([ts.value.iloc[1:], pd.Series(value, copy=False)])
+            value_df.reset_index(drop=True, inplace=True)
+            # pyre-fixme[6]: For 1st argument expected `Union[None, DatetimeIndex,
+            #  Series]` but got `DataFrame`.
+            return TimeSeriesData(time=time_df, value=value_df)
         else:
             if isinstance(value, float):
                 raise ValueError(
@@ -568,14 +591,14 @@ class AnomalyResponse:
                 )
             value_dict = {}
             for i, value_col in enumerate(self.key_mapping):
-                value_dict[value_col] = (
-                    ts.value[value_col].iloc[1:].append(pd.Series(value[i], copy=False))
+                value_dict[value_col] = pd.concat(
+                    [ts.value[value_col].iloc[1:], pd.Series(value[i], copy=False)]
                 )
                 value_dict[value_col].reset_index(drop=True, inplace=True)
             return TimeSeriesData(
                 pd.DataFrame(
                     {
-                        **{"time": time},
+                        **{"time": time_df},
                         **{
                             value_col: value_dict[value_col]
                             for value_col in self.key_mapping
@@ -601,12 +624,14 @@ class AnomalyResponse:
         self._inplace_update_ts(self.scores, time, score)
         cb = self.confidence_band
         if cb is not None:
-            self._inplace_update_ts(cb.lower, time, ci_lower),
+            (self._inplace_update_ts(cb.lower, time, ci_lower),)
             self._inplace_update_ts(cb.upper, time, ci_upper)
 
-        self._inplace_update_ts(self.predicted_ts, time, pred)
+        if self.predicted_ts is not None:
+            self._inplace_update_ts(self.predicted_ts, time, pred)
         self._inplace_update_ts(self.anomaly_magnitude_ts, time, anom_mag)
-        self._inplace_update_ts(self.stat_sig_ts, time, stat_sig)
+        if self.stat_sig_ts is not None:
+            self._inplace_update_ts(self.stat_sig_ts, time, stat_sig)
 
     def _inplace_update_ts(
         self,
@@ -631,16 +656,59 @@ class AnomalyResponse:
 
         return AnomalyResponse(
             scores=self.scores[-N:],
-            confidence_band=None
-            if cb is None
-            else ConfidenceBand(
-                upper=cb.upper[-N:],
-                lower=cb.lower[-N:],
+            confidence_band=(
+                None
+                if cb is None
+                else ConfidenceBand(
+                    upper=cb.upper[-N:],
+                    lower=cb.lower[-N:],
+                )
             ),
             predicted_ts=None if pts is None else pts[-N:],
             anomaly_magnitude_ts=self.anomaly_magnitude_ts[-N:],
             stat_sig_ts=None if ssts is None else ssts[-N:],
         )
+
+    def extend(self, other: "AnomalyResponse", validate: bool = True) -> None:
+        """
+        Extends :class:`AnomalyResponse` with another :class:`AnomalyResponse`
+        object.
+
+        Args:
+          other: The other :class:`AnomalyResponse` object.
+          validate (optional): A boolean representing if the contained
+            :class:`TimeSeriesData` objects should be validated after
+            concatenation (default True).
+
+        Raises:
+          ValueError: Validation failed, or some of the components of this
+            :class:`AnomalyResponse` are None while `other`'s are not (or vice
+            versa).
+        """
+        if not isinstance(other, AnomalyResponse):
+            raise TypeError("extend must take another AnomalyResponse object")
+        component_mismatch_error_msg = (
+            "The {} in one of the AnomalyResponse objects is None while the "
+            "other is not. Either both should be None or neither."
+        )
+        if (self.confidence_band is None) ^ (other.confidence_band is None):
+            raise ValueError(component_mismatch_error_msg.format("confidence_band"))
+        if (self.predicted_ts is None) ^ (other.predicted_ts is None):
+            raise ValueError(component_mismatch_error_msg.format("predicted_ts"))
+        if (self.stat_sig_ts is None) ^ (other.stat_sig_ts is None):
+            raise ValueError(component_mismatch_error_msg.format("stat_sig_ts"))
+
+        self.scores.extend(other.scores, validate=validate)
+        if self.confidence_band is not None:
+            cb = self.confidence_band
+            other_cb = cast(ConfidenceBand, other.confidence_band)
+            cb.upper.extend(other_cb.upper, validate=validate)
+            cb.lower.extend(other_cb.lower, validate=validate)
+        if self.predicted_ts is not None:
+            self.predicted_ts.extend(other.predicted_ts, validate=validate)
+        self.anomaly_magnitude_ts.extend(other.anomaly_magnitude_ts, validate=validate)
+        if self.stat_sig_ts is not None:
+            self.stat_sig_ts.extend(other.stat_sig_ts, validate=validate)
 
     def __str__(self) -> str:
         cb = self.confidence_band

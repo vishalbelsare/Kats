@@ -3,12 +3,14 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import collections
 import logging
 import time
 from multiprocessing import cpu_count
 from multiprocessing.dummy import Pool
-from typing import List, Optional, Union, Any, Tuple, Dict
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -16,11 +18,7 @@ import torch
 from kats.consts import TimeSeriesData
 from kats.models.globalmodel.ensemble import GMEnsemble
 from kats.models.globalmodel.model import GMModel
-from kats.models.globalmodel.utils import (
-    fill_missing_value_na,
-    split,
-    GMParam,
-)
+from kats.models.globalmodel.utils import fill_missing_value_na, GMParam, split
 from kats.utils.backtesters import BackTesterExpandingWindow
 
 """
@@ -61,6 +59,7 @@ class GMBackTester:
         # pyre-fixme[2]: Parameter annotation cannot contain `Any`.
         data: Union[List[TimeSeriesData], Dict[Any, TimeSeriesData]],
         gmparam: GMParam,
+        # pyre-fixme[11]: Annotation `Timestamp` is not defined as a type.
         backtest_timestamp: List[Union[str, pd.Timestamp]],
         splits: int = 3,
         overlap: bool = True,
@@ -70,7 +69,6 @@ class GMBackTester:
         earliest_timestamp: Union[str, pd.Timestamp, None] = None,
         max_core: Optional[int] = None,
     ) -> None:
-
         if not isinstance(gmparam, GMParam):
             msg = f"gmparam should be GMParam object but receives {type(gmparam)}."
             logging.error(msg)
@@ -99,6 +97,7 @@ class GMBackTester:
             msg = "backtest_timestamp should be a non-empty list of timestamp strings."
             logging.error(msg)
             raise ValueError(msg)
+        # pyre-fixme[4]: Attribute must be annotated.
         self.backtest_timestamp = backtest_timestamp
 
         if not isinstance(splits, int) or splits < 1:
@@ -125,6 +124,7 @@ class GMBackTester:
             msg = f"earliest_timestamp should either be a str or a pd.Timestamp but receives {type(earliest_timestamp)}."
             logging.error(msg)
             raise ValueError(msg)
+        # pyre-fixme[4]: Attribute must be annotated.
         self.earliest_timestamp = earliest_timestamp
         pdata = self._preprocess(data)
         # pyre-fixme[4]: Attribute must be annotated.
@@ -169,8 +169,9 @@ class GMBackTester:
 
     # pyre-fixme[3]: Return annotation cannot contain `Any`.
     def _preprocess(
+        self,
         # pyre-fixme[2]: Parameter annotation cannot contain `Any`.
-        self, data: Union[List[TimeSeriesData], Dict[Any, TimeSeriesData]]
+        data: Union[List[TimeSeriesData], Dict[Any, TimeSeriesData]],
     ) -> Dict[Any, Dict[Any, TimeSeriesData]]:
         """Preprocessing for input time series, including two steps:
             1. truncate the data before the earliest_timestamp (if earliest_timestamp is None, then skip this step).
@@ -426,7 +427,7 @@ class GMBackTester:
             tmp = bt_test_valid_TSs[k].value.values
             tmp_step = len(tmp) // fcst_window + int(len(tmp) % fcst_window != 0)
             tmp_fcst_step = fcst_window * tmp_step
-            actuals = np.full(tmp_fcst_step, np.nan, np.float)
+            actuals = np.full(tmp_fcst_step, np.nan, float)
             actuals[: len(tmp)] = tmp
             for j in range(tmp_step):
                 tmp_actuals = actuals[j * fcst_window : (j + 1) * fcst_window]
@@ -437,7 +438,8 @@ class GMBackTester:
                 ]
                 ans.extend(tmp_ans)
                 ensemble_fcst = np.median(
-                    np.column_stack(fcst_all[i][k][j] for i in range(n)), axis=1
+                    np.column_stack(fcst_all[i][k][j] for i in range(n)),
+                    axis=1,
                 )
                 evl = eval_func(ensemble_fcst, tmp_actuals)
                 evl["step"] = j
