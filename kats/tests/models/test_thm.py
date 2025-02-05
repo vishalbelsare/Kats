@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import logging
 from unittest import TestCase
 
@@ -10,10 +12,7 @@ import numpy as np
 import pandas as pd
 from kats.consts import TimeSeriesData
 from kats.models import prophet
-from kats.models.reconciliation.base_models import (
-    BaseTHModel,
-    GetAggregateTS,
-)
+from kats.models.reconciliation.base_models import BaseTHModel, GetAggregateTS
 from kats.models.reconciliation.thm import TemporalHierarchicalModel
 
 
@@ -34,7 +33,6 @@ bm5 = BaseTHModel(level=5, fcsts=np.random.randn(5), residuals=np.random.randn(l
 
 class testBaseTHModel(TestCase):
     def test_initialization(self) -> None:
-
         BaseTHModel(2, model_name="prophet", model_params=prophet.ProphetParams())
         BaseTHModel(1, residuals=np.random.randn(4), fcsts=np.random.randn(4))
 

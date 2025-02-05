@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 from __future__ import annotations
 
 try:
@@ -11,22 +13,36 @@ except ImportError:
     # Python < 3.8
     import importlib_metadata as metadata
 
-from typing import Callable, Union
+import logging
+from typing import Any, Callable, Type, Union
+
+import packaging
+import statsmodels
 
 from packaging import version as pv
 
+OLD_PACKAGING_VERSION: bool = pv.parse(packaging.__version__) <= pv.parse("21.3")
 
-V = Union[str, "Version", pv.Version, pv.LegacyVersion]
+# type: ignore
+VERSION_TYPE: Type[Any] = (
+    Union[pv.Version, pv.LegacyVersion] if OLD_PACKAGING_VERSION else pv.Version
+)
+
+if OLD_PACKAGING_VERSION:
+    V = Union[str, "Version", pv.Version, pv.LegacyVersion]
+else:
+    V = Union[str, "Version", pv.Version]
 
 
 class Version:
     """Extend packaging Version to allow comparing to version strings.
 
     Wraps instead of extends, because pv.parse can return either a
-    pv.Version or a pv.LegacyVersion.
+    pv.Version or a pv.LegacyVersion for version under 21.3
     """
 
-    version: Union[pv.Version, pv.LegacyVersion]
+    # type: ignore
+    version: VERSION_TYPE
 
     def __init__(self, version: V) -> None:
         """Parse a version.
@@ -36,13 +52,21 @@ class Version:
                 version object.
         """
         if isinstance(version, str):
-            self.version = self._parse(version)
+            # type: ignore
+            self.version: VERSION_TYPE = self._parse(version)
         elif isinstance(version, Version):
-            self.version = version.version
+            # type: ignore
+            self.version: VERSION_TYPE = version.version
         else:
-            self.version = version
+            # type: ignore
+            self.version: VERSION_TYPE = version
 
     def _parse(self, version: str) -> Union[pv.Version, pv.LegacyVersion]:
+        if version == "statsmodels":
+            return pv.Version(
+                statsmodels.__version__
+            )  # TODO: importlib.metadata.version is spuriously returning 0.0.0 as statsmodels version, breaking compat
+
         try:
             version = metadata.version(version)
         except metadata.PackageNotFoundError:
@@ -73,6 +97,6 @@ class Version:
         elif isinstance(other, str):
             other = self._parse(other)
         try:
-            return method(self.version._key, other._key)
+            return method(self.version._key, other._key)  # type: ignore
         except (AttributeError, TypeError):
             return NotImplemented

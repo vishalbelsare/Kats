@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """
 This module contains 1) the BaseTHModel class for storing information of base models;
 and 2) the GetAggregateTS class for aggregating base time series to higher levels.
@@ -34,6 +36,7 @@ BASE_MODELS = {
 import logging
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 
@@ -56,10 +59,9 @@ class BaseTHModel:
         level: int,
         model_name: Optional[str] = None,
         model_params: Optional[object] = None,
-        residuals: Optional[np.ndarray] = None,
-        fcsts: Optional[np.ndarray] = None,
+        residuals: Optional[npt.NDArray] = None,
+        fcsts: Optional[npt.NDArray] = None,
     ) -> None:
-
         if not isinstance(level, int) or level < 1:
             msg = f"Level should be a positive integer but receive {level}."
             logging.error(msg)
@@ -99,7 +101,6 @@ class GetAggregateTS:
     """
 
     def __init__(self, data: TimeSeriesData) -> None:
-
         if not data.is_univariate():
             msg = f"Only support univariate time series, but get {type(data.value)}."
             logging.error(msg)

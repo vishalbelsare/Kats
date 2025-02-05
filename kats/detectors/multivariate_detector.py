@@ -3,10 +3,13 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 
 """
 This module implements the multivariate Outlier Detection algorithm as a Detector Model.
 """
+
 import json
 from typing import Any, Optional
 
@@ -77,7 +80,7 @@ class MultivariateAnomalyDetectorModel(DetectorModel):
         self,
         data: TimeSeriesData,
         historical_data: Optional[TimeSeriesData] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         """Fit MultivariateAnomalyDetector.
 
@@ -109,7 +112,7 @@ class MultivariateAnomalyDetectorModel(DetectorModel):
         self,
         data: TimeSeriesData,
         historical_data: Optional[TimeSeriesData] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> AnomalyResponse:
         """Get anomaly scores.
 
@@ -131,7 +134,9 @@ class MultivariateAnomalyDetectorModel(DetectorModel):
         output_scores_df = self.model.anomaly_score_df
 
         assert output_scores_df is not None
-        output_scores_df = output_scores_df[output_scores_df.index >= data.time.min()]
+        output_scores_df = output_scores_df[
+            output_scores_df.index.to_series().ge(data.time.min())
+        ]
 
         zeros = np.zeros(shape=(data.time.shape[0], output_scores_df.shape[1]))
         padding = np.empty(
@@ -184,7 +189,7 @@ class MultivariateAnomalyDetectorModel(DetectorModel):
         self,
         data: TimeSeriesData,
         historical_data: Optional[TimeSeriesData] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> AnomalyResponse:
         """Fit a model and return the anomaly scores.
 

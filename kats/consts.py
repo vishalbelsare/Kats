@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """
 This module contains some of the key data structures in the Kats library,
 including :class:`TimeSeriesData`, :class:`TimeSeriesChangePoint`, and
@@ -24,17 +26,25 @@ import datetime
 import logging
 from collections.abc import Iterable
 from enum import auto, Enum, unique
-from typing import Any, cast, Dict, List, Optional, Tuple, Union
+from typing import Any, cast, Dict, List, Literal, Optional, Tuple, Union
 
 import dateutil
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from kats.compat.pandas import assert_frame_equal, assert_series_equal
 from pandas.api.types import is_datetime64_any_dtype as is_datetime, is_numeric_dtype
 from pandas.tseries.frequencies import to_offset
 
 FigSize = Tuple[int, int]
+INTERPOLATION_METHOD_TYPE = (
+    Literal["higher"]
+    | Literal["linear"]
+    | Literal["lower"]
+    | Literal["midpoint"]
+    | Literal["nearest"]
+)
 
 
 # Constants
@@ -49,6 +59,35 @@ INTERPOLATION_METHODS = {
     "bfill",
     "ffill",
 }  # List of possible interpolation methods
+
+IRREGULAR_GRANULARITY_ERROR = (
+    "This algorithm or this parameter setup does not support input data with irregular data granularity. "
+    "Please update your query to ensure that your data have fixed granularity."
+)
+
+
+class KatsError(Exception):
+    pass
+
+
+class DataError(KatsError):
+    pass
+
+
+class DataIrregularGranularityError(DataError):
+    pass
+
+
+class DataInsufficientError(DataError):
+    pass
+
+
+class ParameterError(KatsError):
+    pass
+
+
+class InternalError(KatsError):
+    pass
 
 
 def _log_error(msg: str) -> ValueError:
@@ -68,11 +107,14 @@ class TimeSeriesChangePoint:
 
     def __init__(
         self,
+        # pyre-fixme[11]: Annotation `Timestamp` is not defined as a type.
         start_time: pd.Timestamp,
         end_time: pd.Timestamp,
         confidence: float,
     ) -> None:
+        # pyre-fixme[4]: Attribute must be annotated.
         self._start_time = start_time
+        # pyre-fixme[4]: Attribute must be annotated.
         self._end_time = end_time
         self._confidence = confidence
 
@@ -153,6 +195,9 @@ class TimeSeriesData:
         (default "raise").
     - tz_nonexistant: A string representing how to handle nonexistant timezone
         values (default "raise").
+    - categorical_var: A list of column names of categorical variables that are not required to be numerical. Default is None.
+    - drop_duplicate_time: A bool variable to indicate whether to drop the duplicate time stamps.
+    - cache_datetimes: A bool variable to indicate whether to use pandas cache to avoid recomputing datetime conversions
 
     Raises:
       ValueError: Invalid params passed when trying to create the
@@ -201,12 +246,17 @@ class TimeSeriesData:
         use_unix_time: bool = False,
         unix_time_units: str = "ns",
         tz: Optional[str] = None,
-        tz_ambiguous: Union[str, np.ndarray] = "raise",
+        tz_ambiguous: Union[str, npt.NDArray] = "raise",
         tz_nonexistent: str = "raise",
+        categorical_var: Optional[List[str]] = None,
+        drop_duplicate_time: bool = False,
+        cache_datetimes: bool = True,
     ) -> None:
         """Initializes :class:`TimeSeriesData` class with arguments provided."""
         self.time_col_name = time_col_name
-
+        self.categorical_var: List[str] = (
+            categorical_var if categorical_var is not None else []
+        )
         # If DataFrame is passed
         if df is not None:
             if not isinstance(df, pd.DataFrame):
@@ -217,9 +267,9 @@ class TimeSeriesData:
                 raise _log_error(msg)
             # If empty DataFrame is passed then create an empty object
             if df.empty:
-                self._time = pd.Series([], name=time_col_name, dtype=float)
+                self._time = pd.Series([], name=time_col_name, dtype="datetime64[ns]")
                 self._value = pd.Series([], name=DEFAULT_VALUE_NAME, dtype=float)
-                logging.warning("Initializing empty TimeSeriesData object")
+                logging.info("Initializing empty TimeSeriesData object")
             # Otherwise initialize TimeSeriesData from DataFrame
             else:
                 # Ensuring time column is present in DataFrame
@@ -237,8 +287,15 @@ class TimeSeriesData:
                     tz=tz,
                     tz_ambiguous=tz_ambiguous,
                     tz_nonexistent=tz_nonexistent,
+                    cache_datetimes=cache_datetimes,
                 )
+                if drop_duplicate_time:
+                    # drop duplicate time stamps
+                    df = df.drop_duplicates(subset=[self.time_col_name], keep="first")
+
                 # Sort by time
+                # pyre-fixme[6]: For 2nd argument expected `DataFrame` but got
+                #  `Optional[DataFrame]`.
                 df = self._sort_by_time(sort_by_time=sort_by_time, df=df)
                 self._extract_from_df(df=df)
 
@@ -264,31 +321,31 @@ class TimeSeriesData:
             if isinstance(time, pd.DatetimeIndex):
                 self._time = pd.Series(time, copy=False)
             else:
-                self._time = cast(pd.Series, time.reset_index(drop=True))
+                self._time = time.reset_index(drop=True)
             self._value = value.reset_index(drop=True)
             self._set_univariate_values_to_series()
             # Set time col name
             if time.name:
                 self.time_col_name = time.name
             else:
-                # pyre-ignore[6]: Expected `Union[typing.Callable[[Optional[typing.Has...
                 self._time.rename(DEFAULT_TIME_NAME, inplace=True)
             # Make sure the value series has a name
             if (
                 isinstance(self._value, pd.core.series.Series)
                 and self._value.name is None
             ):
-                # pyre-ignore[6]: Expected `Union[typing.Callable[[Optional[typing.Has...
                 self._value.rename(DEFAULT_VALUE_NAME, inplace=True)
             # Checking for emptiness
             if self.time.empty and self.value.empty:
                 logging.warning("Initializing empty TimeSeriesData object")
-                self.time = pd.Series([], name=time_col_name)
+                self.time = pd.Series([], name=time_col_name, dtype="datetime64[ns]")
                 if isinstance(value, pd.DataFrame):
-                    self.value = pd.Series([], name=DEFAULT_VALUE_NAME)
+                    self.value = pd.Series([], name=DEFAULT_VALUE_NAME, dtype=float)
                 else:
                     self.value = pd.Series(
-                        [], name=value.name if value.name else DEFAULT_VALUE_NAME
+                        [],
+                        name=value.name if value.name else DEFAULT_VALUE_NAME,
+                        dtype=float,
                     )
             # Raise exception if only one of time and value is empty
             elif self.time.empty or self.value.empty:
@@ -296,31 +353,34 @@ class TimeSeriesData:
                 raise _log_error(msg)
             # If time values are passed then standardizing format
             else:
-                self.time = cast(
-                    pd.Series,
-                    self._set_time_format(
-                        self.time,
-                        date_format=date_format,
-                        use_unix_time=use_unix_time,
-                        unix_time_units=unix_time_units,
-                        tz=tz,
-                        tz_ambiguous=tz_ambiguous,
-                        tz_nonexistent=tz_nonexistent,
-                    ).reset_index(drop=True),
-                )
+                self.time = self._set_time_format(
+                    self.time,
+                    date_format=date_format,
+                    use_unix_time=use_unix_time,
+                    unix_time_units=unix_time_units,
+                    tz=tz,
+                    tz_ambiguous=tz_ambiguous,
+                    tz_nonexistent=tz_nonexistent,
+                ).reset_index(drop=True)
 
             # Validate that time & value have equal lengths
             self.validate_data(validate_frequency=False, validate_dimension=True)
 
             df = self.to_dataframe()
+            if drop_duplicate_time:
+                # drop duplicate time stamps
+                df = df.drop_duplicates(subset=[self.time_col_name], keep="first")
+
+            # pyre-fixme[6]: For 2nd argument expected `DataFrame` but got
+            #  `Optional[DataFrame]`.
             df = self._sort_by_time(sort_by_time=sort_by_time, df=df)
             self._extract_from_df(df=df)
 
         # If None is passed
         elif not time and not value:
-            self._time = pd.Series([], name=time_col_name)
-            self._value = pd.Series([], name=DEFAULT_VALUE_NAME)
-            logging.warning("Initializing empty TimeSeriesData object")
+            self._time = pd.Series([], name=time_col_name, dtype="datetime64[ns]")
+            self._value = pd.Series([], name=DEFAULT_VALUE_NAME, dtype=float)
+            logging.info("Initializing empty TimeSeriesData object")
 
         # Error if only one of time or value is None
         else:
@@ -328,24 +388,33 @@ class TimeSeriesData:
             raise _log_error(msg)
 
         # Validate values
+
         if not self.value.empty and not (
             (
                 isinstance(self.value, pd.core.series.Series)
-                and is_numeric_dtype(self.value)
+                and (
+                    is_numeric_dtype(self.value)
+                    or self.value.name in self.categorical_var
+                )
             )
             or (
                 isinstance(self.value, pd.DataFrame)
-                and all(is_numeric_dtype(self.value[col]) for col in self.value)
+                and all(
+                    is_numeric_dtype(self.value[col])
+                    for col in self.value
+                    if col not in self.categorical_var
+                )
             )
         ):
             if isinstance(self.value, pd.core.series.Series):
                 value_dtypes = self.value.dtypes
             else:  # DataFrame
-                value_dtypes = list(self.value.dtypes)
+                value_dtypes = dict(self.value.dtypes)
             msg = f"Time series data is type {value_dtypes} but must be numeric"
             raise _log_error(msg)
 
         self._calc_min_max_values()
+        self.sort_by_time: bool = sort_by_time
 
     @property
     def time(self) -> pd.Series:
@@ -465,7 +534,9 @@ class TimeSeriesData:
         return len(self.value)
 
     def __getitem__(
-        self, sliced: Union[str, Iterable, builtins.slice]
+        self,
+        # pyre-fixme[24]: Generic type `slice` expects 3 type parameters.
+        sliced: Union[str, Iterable, builtins.slice],
     ) -> TimeSeriesData:
         if isinstance(sliced, str) or (
             isinstance(sliced, Iterable) and all(isinstance(s, str) for s in sliced)
@@ -476,11 +547,7 @@ class TimeSeriesData:
                 time_col_name=self.time_col_name,
             )
         return TimeSeriesData(
-            # pyre-ignore[6]: Expected `Optional[typing.Hashable]` for 1st param but
-            #  got `Union[typing.Iterable[typing.Any], slice]`.
             time=self.time[sliced],
-            # pyre-ignore[6]: Expected `Optional[typing.Hashable]` for 1st param but
-            #  got `Union[typing.Iterable[typing.Any], slice]`.
             value=self.value[sliced],
             time_col_name=self.time_col_name,
         )
@@ -489,6 +556,7 @@ class TimeSeriesData:
         return self.to_dataframe().__repr__()
 
     def _repr_html_(self) -> str:
+        # pyre-fixme[7]: Expected `str` but got `Optional[str]`.
         return self.to_dataframe()._repr_html_()
 
     def _set_univariate_values_to_series(self) -> None:
@@ -514,8 +582,9 @@ class TimeSeriesData:
         use_unix_time: Optional[bool],
         unix_time_units: Optional[str],
         tz: Optional[str] = None,
-        tz_ambiguous: Union[str, np.ndarray] = "raise",
+        tz_ambiguous: Union[str, npt.NDArray] = "raise",
         tz_nonexistent: str = "raise",
+        cache_datetimes: bool = True,
     ) -> pd.core.series.Series:
         """Parses time format when initializing :class:`TimeSeriesData`."""
 
@@ -526,14 +595,19 @@ class TimeSeriesData:
                     if tz:
                         return (
                             pd.to_datetime(
-                                series.values, unit=unix_time_units, utc=True
+                                series.values,
+                                unit=unix_time_units,
+                                utc=True,
+                                cache=cache_datetimes,
                             )
                             .tz_convert(tz)
                             .to_series()
                             .reset_index(drop=True)
                         )
                     else:
-                        return pd.to_datetime(series, unit=unix_time_units)
+                        return pd.to_datetime(
+                            series, unit=unix_time_units, cache=cache_datetimes
+                        )
                 except ValueError:
                     msg = (
                         "Failed to parse time column "
@@ -547,7 +621,9 @@ class TimeSeriesData:
                 try:
                     if tz:
                         return (
-                            pd.to_datetime(series.values, format=date_format)
+                            pd.to_datetime(
+                                series.values, format=date_format, cache=cache_datetimes
+                            )
                             .tz_localize(
                                 tz, ambiguous=tz_ambiguous, nonexistent=tz_nonexistent
                             )
@@ -555,7 +631,9 @@ class TimeSeriesData:
                             .reset_index(drop=True)
                         )
                     else:
-                        return pd.to_datetime(series, format=date_format)
+                        return pd.to_datetime(
+                            series, format=date_format, cache=cache_datetimes
+                        )
                 except ValueError:
                     msg = (
                         "Failed to parse time column "
@@ -632,7 +710,6 @@ class TimeSeriesData:
         Raises:
           ValueError: The frequency and/or dimensions were invalid.
         """
-
         # check the time frequency is constant
         if validate_frequency and pd.infer_freq(self.time_to_index()) is None:
             raise ValueError("Only constant frequency is supported for time!")
@@ -677,6 +754,7 @@ class TimeSeriesData:
         else:
             return False
 
+    # pyre-fixme[11]: Annotation `Timedelta` is not defined as a type.
     def freq_to_timedelta(self) -> pd.Timedelta:
         """
         Returns a `pandas.Timedelta` representation of the
@@ -740,9 +818,10 @@ class TimeSeriesData:
             ).reset_index(drop=True)
         else:
             raise ValueError(f"Wrong value type: {type(self.value)}")
+        # pyre-fixme[7]: Expected `DataFrame` but got `Optional[DataFrame]`.
         return output_df
 
-    def to_array(self) -> np.ndarray:
+    def to_array(self) -> npt.NDArray:
         """Converts the :class:`TimeSeriesData` object to a `numpy.ndarray`.
 
         Returns:
@@ -860,17 +939,14 @@ class TimeSeriesData:
         Raises:
           ValueError: The :class:`TimeSeriesData` has less than 2 data points.
         """
-
-        df = self.to_dataframe()
-
-        if df.shape[0] <= 1:
+        if len(self) <= 1:
             raise ValueError("Cannot find frequency for less than two data points")
 
-        freq_counts = (
-            df[self.time_col_name].diff().value_counts().sort_values(ascending=False)
-        )
-
-        frequency = freq_counts.index[0]
+        # make sure the time series is sorted by time
+        if self.sort_by_time:
+            frequency = self.time.diff().mode()[0]
+        else:
+            frequency = self.time.sort_values().diff().mode()[0]
 
         return frequency
 
@@ -878,8 +954,10 @@ class TimeSeriesData:
         self,
         freq: Optional[Union[str, pd.Timedelta]] = None,
         base: int = 0,
+        origin: pd.Timestamp | str = "start_day",
         method: str = "linear",
         remove_duplicate_time: bool = False,
+        **kwargs: Any,
     ) -> TimeSeriesData:
         """
         Interpolate missing date if `time` doesn't have constant frequency.
@@ -888,6 +966,7 @@ class TimeSeriesData:
           - linear
           - backward fill
           - forward fill
+          - all other methods that pd.interpolate supports
 
         See https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.interpolate.html
         for more detail on these options.
@@ -898,16 +977,22 @@ class TimeSeriesData:
             See https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.resample.html
             Note that base will be deprecated since version 1.1.0.
             The new arguments that you should use are ‘offset’ or ‘origin’.
+          origin: base argument for resample().
+            See https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.resample.html
+            Origin "start_day" is chosen for backward compatibility with `base=0`.
+            When non-default `base` is detected, `origin` will be set to "start".
+            Future versions of Kats will deprecate `base` and use `origin` instead,
+            defaulting to "start".
           method: A string representing the method to impute the missing time
             and data. See the above options (default "linear").
           remove_duplicate_index: A boolean to auto-remove any duplicate time
             values, as interpolation in this case due to the need to index
             on time (default False).
+          kwargs: additional arguments to pass to pd.interpolate
 
         Returns:
             A new :class:`TimeSeriesData` object with interpolated data.
         """
-
         if not freq:
             freq = self.infer_freq_robust()
 
@@ -931,6 +1016,10 @@ class TimeSeriesData:
         if remove_duplicate_time:
             df = df[~df.index.duplicated()]
 
+        if pd.__version__ >= "1.1":
+            origin = origin if base == 0 else "start"
+            return self._interpolate_new(df, freq, origin, method, **kwargs)
+
         if method == "linear":
             df = df.resample(rule=freq, base=base).interpolate(method="linear")
 
@@ -939,10 +1028,38 @@ class TimeSeriesData:
 
         elif method == "bfill":
             df = df.resample(rule=freq, base=base).bfill()
-
         else:
-            # method is not supported
-            raise ValueError(f"the given method is not supported: {method}")
+            df = df.resample(rule=freq, base=base).interpolate(
+                method=cast(INTERPOLATION_METHOD_TYPE, method), **kwargs
+            )
+
+        df = df.reset_index().rename(columns={"index": self.time_col_name})
+        return TimeSeriesData(df, time_col_name=self.time_col_name)
+
+    def _interpolate_new(
+        self,
+        df: pd.DataFrame,
+        freq: Optional[Union[str, pd.Timedelta]],
+        origin: pd.Timestamp | str,
+        method: str,
+        **kwargs: Any,
+    ) -> TimeSeriesData:
+        if method == "linear":
+            # pyre-ignore
+            df = df.resample(rule=freq, origin=origin).interpolate(method="linear")
+
+        elif method == "ffill":
+            # pyre-ignore
+            df = df.resample(rule=freq, origin=origin).ffill()
+
+        elif method == "bfill":
+            # pyre-ignore
+            df = df.resample(rule=freq, origin=origin).bfill()
+        else:
+            # pyre-ignore
+            df = df.resample(rule=freq, origin=origin).interpolate(
+                method=cast(INTERPOLATION_METHOD_TYPE, method), **kwargs
+            )
 
         df = df.reset_index().rename(columns={"index": self.time_col_name})
         return TimeSeriesData(df, time_col_name=self.time_col_name)
@@ -998,9 +1115,47 @@ class TimeSeriesData:
         if grid:
             ax.grid(True, **grid_kwargs_)
         fig.tight_layout()
-        # pyre-ignore[29]: `pd.core.accessor.CachedAccessor` is not a function.
         df.plot(x=self.time_col_name, y=cols, ax=ax, **plot_kwargs)
         return ax
+
+    def is_timezone_aware(self) -> bool:
+        # pyre-fixme[16]: `DatetimeIndex` has no attribute `tzinfo`.
+        if pd.DatetimeIndex(self.time).tzinfo is None:
+            return False
+        else:
+            return True
+
+    def convert_timezone(self, tz: str) -> None:
+        if self.is_timezone_aware():
+            self.time = (
+                # pyre-fixme[16]: `DatetimeIndex` has no attribute `tz_convert`.
+                pd.DatetimeIndex(self.time)
+                .tz_convert(tz)
+                .to_series()
+                .reset_index(drop=True)
+            )
+        else:
+            logging.warning("Please make sure the time series is timezone aware")
+
+    def set_timezone(
+        self,
+        tz: str,
+        tz_ambiguous: Union[str, npt.NDArray] = "raise",
+        tz_nonexistent: str = "raise",
+        sort_by_time: bool = True,
+    ) -> None:
+        if not (self.is_timezone_aware()):
+            self.time = (
+                # pyre-ignore
+                pd.DatetimeIndex(self.time)
+                .tz_localize(tz, ambiguous=tz_ambiguous, nonexistent=tz_nonexistent)
+                .to_series()
+                .reset_index(drop=True)
+            )
+            df = self._sort_by_time(sort_by_time=sort_by_time, df=self.to_dataframe())
+            self._extract_from_df(df=df)
+        else:
+            logging.warning("Please make sure the time series is not timezone aware")
 
 
 class TimeSeriesIterator:
@@ -1091,6 +1246,12 @@ class IntervalAnomaly:
         self.start: pd.Timestamp = start
         self.end: pd.Timestamp = end
 
+    def __str__(self) -> str:
+        return f"IntervalAnomaly(start: {self.start}, end: {self.end})"
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
     @property
     def second_len(self) -> int:
         return (self.end - self.start) / np.timedelta64(1, "s")
@@ -1122,6 +1283,7 @@ class SearchMethodEnum(Enum):
     RANDOM_SEARCH_UNIFORM = auto()
     RANDOM_SEARCH_SOBOL = auto()
     BAYES_OPT = auto()
+    NEVERGRAD = auto()
 
 
 @unique

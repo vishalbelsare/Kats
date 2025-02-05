@@ -3,9 +3,11 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import re
 import unittest
-from typing import cast, Any, Dict
+from typing import Any, cast, Dict
 from unittest import TestCase
 
 import pandas as pd
@@ -17,6 +19,7 @@ from kats.tests.models.test_models_dummy_data import (
     AIR_FCST_HW_1,  # first param combination results
     AIR_FCST_HW_2,
 )
+
 from parameterized.parameterized import parameterized
 
 pd_ver = float(re.findall("([0-9]+\\.[0-9]+)\\..*", pd.__version__)[0])

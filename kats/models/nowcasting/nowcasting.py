@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """Nowcasting is the basic model for short-term forecasting.
 
 This modules contains class NowcastingParams, which is the class parameter
@@ -27,10 +29,7 @@ import numpy as np
 import pandas as pd
 from kats.consts import Params, TimeSeriesData
 from kats.models.nowcasting.feature_extraction import LAG, ROC
-from kats.models.nowcasting.model_io import (
-    serialize_for_zippy,
-    deserialize_from_zippy,
-)
+from kats.models.nowcasting.model_io import deserialize_from_zippy, serialize_for_zippy
 from sklearn.ensemble import GradientBoostingRegressor
 
 

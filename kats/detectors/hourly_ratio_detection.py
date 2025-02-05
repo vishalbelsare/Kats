@@ -3,12 +3,15 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 
 import logging
-from typing import Any, Optional, Sequence, Tuple, Union, List
+from typing import Any, List, Optional, Sequence, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from kats.consts import TimeSeriesChangePoint, TimeSeriesData
 from kats.detectors.detector import Detector
@@ -43,6 +46,7 @@ class HourlyRatioDetector(Detector):
     def __init__(
         self,
         data: TimeSeriesData,
+        # pyre-fixme[11]: Annotation `Timedelta` is not defined as a type.
         freq: Union[str, pd.Timedelta, None] = None,
         aggregate: Optional[str] = None,
     ) -> None:
@@ -61,6 +65,7 @@ class HourlyRatioDetector(Detector):
         self._ratiodf: Optional[pd.DataFrame] = None
         self.incomplete_dates: Optional[List[TimeSeriesChangePoint]] = None
         self.anomaly_dates: Optional[List[TimeSeriesChangePoint]] = None
+        # pyre-fixme[4]: Attribute must be annotated.
         self.freq = freq
         self.aggregate = aggregate
         self._valid_frequency()
@@ -151,11 +156,11 @@ class HourlyRatioDetector(Detector):
 
     def _mahalanobis_test(
         self,
-        obs: np.ndarray,
-        median: np.ndarray,
-        cov: np.ndarray,
+        obs: npt.NDArray,
+        median: npt.NDArray,
+        cov: npt.NDArray,
         alpha: float = 0.01,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> Tuple[npt.NDArray, npt.NDArray]:
         """mahalanobis test function.
 
         Args:

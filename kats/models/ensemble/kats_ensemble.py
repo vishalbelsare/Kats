@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """Kats ensemble model
 
 Implementation of the Kats ensemble model. It starts from seasonality detection, if seasonality detected, it
@@ -308,7 +310,6 @@ class KatsEnsemble(Model):
         num_process = min(len(MODELS), (cpu_count() - 1) // 2)
         if num_process < 1:
             num_process = 1
-        # pyre-fixme[16]: `SyncManager` has no attribute `Pool`.
         pool = multiprocessing.Manager().Pool(
             processes=(num_process), maxtasksperchild=1000
         )
@@ -603,7 +604,6 @@ class KatsEnsemble(Model):
         num_process = min(len(MODELS), (cpu_count() - 1) // 2)
         if num_process < 1:
             num_process = 1
-        # pyre-fixme[16]: `SyncManager` has no attribute `Pool`.
         pool = multiprocessing.Manager().Pool(
             processes=(num_process), maxtasksperchild=1000
         )
@@ -716,7 +716,11 @@ class KatsEnsemble(Model):
         """
 
         if use_zero:
+            # pyre-fixme[6]: For 2nd argument expected `DataFrame` but got
+            #  `Optional[DataFrame]`.
             fcsts["fcst_lower"] = fcsts["fcst_lower"].fillna(0)
+            # pyre-fixme[6]: For 2nd argument expected `DataFrame` but got
+            #  `Optional[DataFrame]`.
             fcsts["fcst_upper"] = fcsts["fcst_upper"].fillna(0)
         else:
             fcsts["fcst_lower"] = fcsts["fcst_lower"].replace(0, np.nan)
@@ -743,7 +747,7 @@ class KatsEnsemble(Model):
         data: TimeSeriesData,
         # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         model_func: Callable,
-        model_param: Params
+        model_param: Params,
         # pyre-fixme[24]: Generic type `Model` expects 1 type parameter.
     ) -> Model:
         """Private method to fit individual model
@@ -816,7 +820,6 @@ class KatsEnsemble(Model):
         num_process = min(len(MODELS.keys()), (cpu_count() - 1) // 2)
         if num_process < 1:
             num_process = 1
-        # pyre-fixme[16]: `SyncManager` has no attribute `Pool`.
         pool = multiprocessing.Manager().Pool(
             processes=(num_process), maxtasksperchild=1000
         )

@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """
 This module implements a simulator for generating synthetic time series data.
 """
@@ -14,6 +16,7 @@ from datetime import timedelta
 from typing import Any, Callable, List, Optional, Union
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from kats.consts import TimeSeriesData
 from pandas.tseries.frequencies import to_offset
@@ -25,7 +28,7 @@ from scipy.stats import norm  # @manual
 TimedeltaLike = Union[timedelta, float, str]
 
 
-def moving_average(a: np.ndarray, n: int = 3) -> np.ndarray:
+def moving_average(a: npt.NDArray, n: int = 3) -> npt.NDArray:
     """Moving average of a numpy array.
 
     Args:
@@ -192,7 +195,7 @@ class Simulator:
             The timeseries generated.
         """
 
-        def component_gen(timepoints: np.ndarray) -> float:
+        def component_gen(timepoints: npt.NDArray) -> float:
             if trend_type == "sigmoid" or trend_type == "S":
                 return magnitude * self.sigmoid(timepoints - 0.5)
             else:  # 'linear' trend by default
@@ -205,7 +208,6 @@ class Simulator:
         magnitude: float = 1.0,
         multiply: bool = False,
     ) -> Simulator:
-
         """Add noise to the generated time series for STL-based simulator.
 
         Noise type is normal - noise will be generated from iid normal distribution;
@@ -219,7 +221,7 @@ class Simulator:
             Generated timeseries.
         """
 
-        def component_gen(timepoints: np.ndarray) -> float:
+        def component_gen(timepoints: npt.NDArray) -> float:
             return magnitude * np.random.randn(len(timepoints))
 
         return self._add_component(component_gen, multiply)
@@ -245,7 +247,7 @@ class Simulator:
         #  timedelta]`.
         period = self._convert_period(period)
 
-        def component_gen(timepoints: np.ndarray) -> float:
+        def component_gen(timepoints: npt.NDArray) -> float:
             return magnitude * np.sin(2 * np.pi * timepoints)
 
         return self._add_component(component_gen, multiply, time_scale=period)

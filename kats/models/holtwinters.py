@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 
 """The Holt Winters model is a time series forecast model that applies exponential smoothing three times, it serves as the extension of the simple exponential smoothing forecast model.
 
@@ -113,7 +115,6 @@ class HoltWintersModel(Model[HoltWintersParams]):
     fcst_df: Optional[pd.DataFrame] = None
 
     def __init__(self, data: TimeSeriesData, params: HoltWintersParams) -> None:
-
         super().__init__(data, params)
         # pyre-fixme[16]: `Optional` has no attribute `value`.
         if not isinstance(self.data.value, pd.Series):
@@ -158,8 +159,9 @@ class HoltWintersModel(Model[HoltWintersParams]):
             raise ValueError("Call fit() before predict().")
 
         logging.debug(
-            "Call predict() with parameters. "
-            "steps:{steps}, kwargs:{kwargs}".format(steps=steps, kwargs=kwargs)
+            "Call predict() with parameters. " "steps:{steps}, kwargs:{kwargs}".format(
+                steps=steps, kwargs=kwargs
+            )
         )
         if "freq" not in kwargs:
             # pyre-fixme[16]: `Optional` has no attribute `time`.

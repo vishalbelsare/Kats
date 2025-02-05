@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import io
 import os
 import pkgutil
@@ -37,7 +39,7 @@ def load_data(file_name: str) -> pd.DataFrame:
     else:
         path = "kats/data/"
     data_object = pkgutil.get_data(ROOT, path + file_name)
-    # pyre-fixme[6]: For 1st param expected `bytes` but got `Optional[bytes]`.
+    # pyre-fixme[6]: For 1st argument expected `Buffer` but got `Optional[bytes]`.
     return pd.read_csv(io.BytesIO(data_object), encoding="utf8")
 
 
@@ -46,12 +48,25 @@ VALUE_COL_NAME = "y"
 MULTIVAR_VALUE_DF_COLS: List[str] = [VALUE_COL_NAME, VALUE_COL_NAME + "_1"]
 
 EMPTY_DF = pd.DataFrame()
-EMPTY_TIME_SERIES = pd.Series([], name=DEFAULT_TIME_NAME, dtype=float)
+EMPTY_TIME_SERIES = pd.Series([], name=DEFAULT_TIME_NAME, dtype="datetime64[ns]")
 EMPTY_VALUE_SERIES = pd.Series([], name=DEFAULT_VALUE_NAME, dtype=float)
 EMPTY_VALUE_SERIES_NO_NAME = pd.Series([], dtype=float)
-EMPTY_TIME_DATETIME_INDEX = pd.DatetimeIndex(pd.Series([], dtype=object))
-EMPTY_DF_WITH_COLS: pd.DataFrame = pd.concat([EMPTY_TIME_SERIES, EMPTY_VALUE_SERIES], axis=1)
+# pyre-fixme[9]: EMPTY_DF_WITH_COLS has type `DataFrame`; used as `Union[DataFrame,
+#  Series]`.
+EMPTY_DF_WITH_COLS: pd.DataFrame = pd.concat(
+    [EMPTY_TIME_SERIES, EMPTY_VALUE_SERIES], axis=1
+)
 NUM_YEARS_OFFSET = 12
+
+CAT_TIME_INDEX = pd.Series(pd.date_range("2020-01-01", periods=5))
+CAT_VALUE = pd.Series(["a", "b", "c", "d", "e"], name="cat_var")
+CAT_MUL_DF = pd.DataFrame(
+    {
+        "time": CAT_TIME_INDEX,
+        "cat_var": CAT_VALUE,
+        "num_var": np.arange(5),
+    }
+)
 
 
 class TimeSeriesBaseTest(TestCase):
@@ -210,6 +225,15 @@ class TimeSeriesDataInitTest(TimeSeriesBaseTest):
             unix_time_units="s",
             tz="US/Pacific",
         )
+        # multivariate data with unixtime in US/Pacific with time zone
+        self.ts_multi_PST_tz = TimeSeriesData(
+            df=pd.DataFrame(
+                {"time": self.unix_list, "value1": [0] * 10, "value2": [0] * 10}
+            ),
+            use_unix_time=True,
+            unix_time_units="s",
+            tz="US/Pacific",
+        )
         # univariate data with unixtime in US/Pacific without time zone
         self.ts_univar_PST = TimeSeriesData(
             df=pd.DataFrame({"time": self.unix_list, "value": [0] * 10}),
@@ -229,6 +253,12 @@ class TimeSeriesDataInitTest(TimeSeriesBaseTest):
             date_format="%Y-%m-%d",
         )
 
+        # univariate data with date str without tz
+        self.ts_multi_str_date = TimeSeriesData(
+            df=pd.DataFrame({"time": date, "value1": [0] * 3, "value2": [0] * 3}),
+            date_format="%Y-%m-%d",
+        )
+
         # univariate data in US/Pacific Time Zone with missing data
         self.ts_univar_PST_missing_tz = TimeSeriesData(
             df=pd.DataFrame(
@@ -238,6 +268,67 @@ class TimeSeriesDataInitTest(TimeSeriesBaseTest):
             unix_time_units="s",
             tz="US/Pacific",
         )
+
+        # test ambiguous
+        self.tsd_dst_ambiguous = TimeSeriesData(
+            df=pd.DataFrame(
+                {
+                    "time": [
+                        "2022-11-06 00:00:00",
+                        "2022-11-06 00:30:00",
+                        "2022-11-06 01:00:00",
+                        "2022-11-06 01:30:00",
+                        "2022-11-06 01:00:00",
+                        "2022-11-06 01:30:00",
+                        "2022-11-06 02:00:00",
+                        "2022-11-06 02:30:00",
+                        "2022-11-06 03:00:00",
+                        "2022-11-06 03:30:00",
+                        "2022-11-06 04:00:00",
+                        "2022-11-06 04:30:00",
+                    ],
+                    "value": [0] * 12,
+                }
+            ),
+            sort_by_time=False,
+        )
+
+        # test nonexistent
+        self.tsd_dst_nonexistent = TimeSeriesData(
+            df=pd.DataFrame(
+                {
+                    "time": [
+                        "2020-03-08 02:00:00",
+                        "2020-03-08 02:30:00",
+                        "2020-03-08 03:00:00",
+                    ],
+                    "value": [0] * 3,
+                }
+            ),
+            sort_by_time=False,
+        )
+
+    def test_init_categorical_ts(self) -> None:
+        # univariate categorical data
+        _ = TimeSeriesData(
+            time=CAT_TIME_INDEX,
+            value=CAT_VALUE,
+            categorical_var=["cat_var"],
+        )
+        # multivariate categorical data
+        _ = TimeSeriesData(
+            df=CAT_MUL_DF,
+            categorical_var=["cat_var"],
+        )
+        # fail to initialize a TimeSeriesData object with categorical variable if not specified
+        self.assertRaises(
+            ValueError,
+            TimeSeriesData,
+            time=CAT_TIME_INDEX,
+            value=CAT_VALUE,
+        )
+        # fail to initialize a TimeSeriesData object with categorical variable if not specified
+        self.assertRaises(ValueError, TimeSeriesData, df=CAT_MUL_DF)
 
     # Testing univariate time series intialized from a DataFrame
     def test_init_from_df_univar(self) -> None:
@@ -434,9 +525,13 @@ class TimeSeriesDataInitTest(TimeSeriesBaseTest):
 
         # Incorrect initialization with value dtypes
         with self.assertRaises(ValueError):
-            TimeSeriesData(time=self.AIR_TIME_SERIES, value=self.AIR_VALUE_SERIES.map(str))
+            TimeSeriesData(
+                time=self.AIR_TIME_SERIES, value=self.AIR_VALUE_SERIES.map(str)
+            )
         with self.assertRaises(ValueError):
-            TimeSeriesData(time=self.AIR_TIME_SERIES, value=self.MULTIVAR_VALUE_DF.applymap(str))
+            TimeSeriesData(
+                time=self.AIR_TIME_SERIES, value=self.MULTIVAR_VALUE_DF.applymap(str)
+            )
 
     # Testing incorrect initializations
     def test_incorrect_init_lengths(self) -> None:
@@ -544,6 +639,75 @@ class TimeSeriesDataInitTest(TimeSeriesBaseTest):
             ),
         )
 
+        # check pd.interpolate method that is not explicitly defined in TimeSeriesData code
+        self.assertEqual(
+            self.ts_univariate_missing.interpolate(freq="D", method="nearest"),
+            TimeSeriesData(
+                pd.DataFrame(
+                    {
+                        "time": [
+                            "2010-01-01",
+                            "2010-01-02",
+                            "2010-01-03",
+                            "2010-01-04",
+                            "2010-01-05",
+                        ],
+                        "value": [1, 2, 3, 3, 4],
+                    }
+                )
+            ),
+        )
+
+        # check pd.interpolate method that is not explicitly defined in TimeSeriesData code
+        # and has additional parameters
+        self.assertEqual(
+            self.ts_univariate_missing.interpolate(
+                freq="D", method="polynomial", order=3
+            ),
+            TimeSeriesData(
+                pd.DataFrame(
+                    {
+                        "time": [
+                            "2010-01-01",
+                            "2010-01-02",
+                            "2010-01-03",
+                            "2010-01-04",
+                            "2010-01-05",
+                        ],
+                        "value": [1, 2, 3, 3.75, 4],
+                    }
+                )
+            ),
+        )
+
+        # check pd.interpolate method that is not explicitly defined in TimeSeriesData code
+        # and has additional parameters
+        self.assertEqual(
+            self.ts_univariate_missing.interpolate(
+                freq="D", method="polynomial", order=1
+            ),
+            TimeSeriesData(
+                pd.DataFrame(
+                    {
+                        "time": [
+                            "2010-01-01",
+                            "2010-01-02",
+                            "2010-01-03",
+                            "2010-01-04",
+                            "2010-01-05",
+                        ],
+                        "value": [1, 2, 3, 3.5, 4],
+                    }
+                )
+            ),
+        )
+
+        # check method that is not in pd.interpolate and have not explicitly defined in TimeSeriesData code
+        with self.assertRaises(ValueError):
+            self.ts_univariate_missing.interpolate(
+                freq="D", method="bad_input_should_fail"
+            )
+
         # multivariate
         self.assertEqual(
             self.ts_multi_missing.interpolate(freq="D", method="linear"),
@@ -641,34 +805,86 @@ class TimeSeriesDataInitTest(TimeSeriesBaseTest):
             ),
         )
 
+        # test methods that are not explicitly defined in TimeSeriesData
+        self.assertEqual(
+            self.ts_multi_missing.interpolate(method="time"),
+            TimeSeriesData(
+                pd.DataFrame(
+                    {
+                        "time": [
+                            "2010-01-01",
+                            "2010-01-02",
+                            "2010-01-03",
+                            "2010-01-04",
+                            "2010-01-05",
+                        ],
+                        "value1": [1, 2, 3, 3.5, 4],
+                        "value2": [4, 3, 2, 1.5, 1],
+                    }
+                )
+            ),
+        )
+
+        # test methods that are not explicitly defined in TimeSeriesData
+        # with additional arguments
+        self.assertEqual(
+            self.ts_multi_missing.interpolate(method="polynomial", order=3),
+            TimeSeriesData(
+                pd.DataFrame(
+                    {
+                        "time": [
+                            "2010-01-01",
+                            "2010-01-02",
+                            "2010-01-03",
+                            "2010-01-04",
+                            "2010-01-05",
+                        ],
+                        "value1": [1, 2, 3, 3.75, 4],
+                        "value2": [4, 3, 2, 1.25, 1],
+                    }
+                )
+            ),
+        )
+
+        # check method that is not in pd.interpolate and have not explicitly defined in TimeSeriesData code
+        with self.assertRaises(ValueError):
+            self.ts_multi_missing.interpolate(freq="D", method="bad_input_should_fail")
+
     # Testing Data interpolate with base
     def test_interpolate_base(self) -> None:
         # create time series with missing data
         np.random.seed(0)
         x = np.random.normal(0.5, 3, 998)
-        time_val0 = list(pd.date_range(start="2018-02-03 14:59:59", freq="1800s", periods=1000))
-        time_val = time_val0[:300] + time_val0[301:605]+ time_val0[606:]
+        time_val0 = list(
+            pd.date_range(start="2018-02-03 14:59:59", freq="1800s", periods=1000)
+        )
+        time_val = time_val0[:300] + time_val0[301:605] + time_val0[606:]
         ts0 = TimeSeriesData(pd.DataFrame({"time": time_val, "value": pd.Series(x)}))
 
         # calculate frequency first
         frequency = str(int(ts0.infer_freq_robust().total_seconds())) + "s"
 
-        # without base value, interpolate won't work, will return all NaN
+        # Without base value, interpolate won't work, will return all NaN
         # this is because start time is not from "**:00:00" or "**:30:00" type.
+        # This is equivalent to origin="start_day"
         self.assertEqual(
+            # pyre-fixme[16]: Optional type has no attribute `value`.
             ts0.interpolate(freq=frequency).to_dataframe().fillna(0).value.sum(),
             0,
         )
-        # with base value, will start from "**:59:59" ("**:00:00" - 1 sec)
+        # With base value, will start from "**:59:59" ("**:00:00" - 1 sec)
         # or "**:29:59" ("**:30:00" -1 sec).
+        # Here we default to origin="start" instead of origin="start_day", which works.
         self.assertEqual(
             ts0.interpolate(freq=frequency, base=-1).to_dataframe().isna().value.sum(),
             0,
         )
 
         # second example, base = 4
-        time_val0 = list(pd.date_range(start="2018-02-03 14:00:04", freq="1800s", periods=1000))
-        time_val = time_val0[:300] + time_val0[301:605]+ time_val0[606:]
+        time_val0 = list(
+            pd.date_range(start="2018-02-03 14:00:04", freq="1800s", periods=1000)
+        )
+        time_val = time_val0[:300] + time_val0[301:605] + time_val0[606:]
         ts0 = TimeSeriesData(pd.DataFrame({"time": time_val, "value": pd.Series(x)}))
 
         frequency = str(int(ts0.infer_freq_robust().total_seconds())) + "s"
@@ -815,6 +1031,55 @@ class TimeSeriesDataInitTest(TimeSeriesBaseTest):
 
         self.assertEqual(self.ts_from_series_and_df_multivar.is_data_missing(), False)
 
+    def test_is_timezone_aware(self) -> None:
+        self.assertEqual(self.ts_univar_PST_tz.is_timezone_aware(), True)
+
+        self.assertEqual(self.ts_univar_str_date.is_timezone_aware(), False)
+
+        self.assertEqual(self.ts_multi_PST_tz.is_timezone_aware(), True)
+
+        self.assertEqual(self.ts_multi_str_date.is_timezone_aware(), False)
+
+    def test_set_timezone(self) -> None:
+        ts_local = self.ts_univar_str_date
+        self.assertEqual(ts_local.is_timezone_aware(), False)
+        ts_local.set_timezone(tz="US/Eastern")
+        self.assertEqual(ts_local.is_timezone_aware(), True)
+        # pyre-fixme[16]: `DatetimeIndex` has no attribute `tzinfo`.
+        self.assertEqual(str(pd.DatetimeIndex(ts_local.time).tzinfo), "US/Eastern")
+
+        ts_local = self.ts_multi_str_date
+        self.assertEqual(ts_local.is_timezone_aware(), False)
+        ts_local.set_timezone(tz="US/Pacific")
+        self.assertEqual(ts_local.is_timezone_aware(), True)
+        self.assertEqual(str(pd.DatetimeIndex(ts_local.time).tzinfo), "US/Pacific")
+
+        ts_local = self.tsd_dst_ambiguous
+        self.assertEqual(ts_local.is_timezone_aware(), False)
+        ts_local.set_timezone(tz="US/Eastern", tz_ambiguous="infer", sort_by_time=True)
+        self.assertEqual(ts_local.is_timezone_aware(), True)
+        self.assertEqual(str(pd.DatetimeIndex(ts_local.time).tzinfo), "US/Eastern")
+
+        ts_local = self.tsd_dst_nonexistent
+        self.assertEqual(ts_local.is_timezone_aware(), False)
+        ts_local.set_timezone(
+            tz="US/Pacific", tz_nonexistent="shift_forward", sort_by_time=True
+        )
+        self.assertEqual(ts_local.is_timezone_aware(), True)
+        self.assertEqual(str(pd.DatetimeIndex(ts_local.time).tzinfo), "US/Pacific")
+
+    def test_convert_timezone(self) -> None:
+        ts_local = self.ts_univar_PST_tz
+        # pyre-fixme[16]: `DatetimeIndex` has no attribute `tzinfo`.
+        self.assertEqual(str(pd.DatetimeIndex(ts_local.time).tzinfo), "US/Pacific")
+        ts_local.convert_timezone(tz="US/Eastern")
+        self.assertEqual(str(pd.DatetimeIndex(ts_local.time).tzinfo), "US/Eastern")
+
+        ts_local = self.ts_multi_PST_tz
+        self.assertEqual(str(pd.DatetimeIndex(ts_local.time).tzinfo), "US/Pacific")
+        ts_local.convert_timezone(tz="US/Eastern")
+        self.assertEqual(str(pd.DatetimeIndex(ts_local.time).tzinfo), "US/Eastern")
+
     def test_min_max_values(self) -> None:
         # test min/max value for univariate
         self.assertEqual(self.ts_from_df.min, np.nanmin(self.ts_from_df.value.values))
@@ -906,15 +1171,15 @@ class TimeSeriesDataOpsTest(TimeSeriesBaseTest):
         transformed_df_date.ds = transformed_df_date.ds.apply(
             lambda x: x + relativedelta(years=NUM_YEARS_OFFSET)
         )
-        transformed_df_date_concat = self.AIR_DF.append(
-            transformed_df_date, ignore_index=True
+        transformed_df_date_concat = pd.concat(
+            [self.AIR_DF, transformed_df_date], ignore_index=True
         )
         transformed_df_date_double = self.AIR_DF_DATETIME.copy(deep=True)
         transformed_df_date_double.ds = transformed_df_date.ds.apply(
             lambda x: x + relativedelta(years=NUM_YEARS_OFFSET * 2)
         )
-        transformed_df_date_concat_double = self.AIR_DF.append(
-            transformed_df_date_double, ignore_index=True
+        transformed_df_date_concat_double = pd.concat(
+            [self.AIR_DF, transformed_df_date_double], ignore_index=True
         )
         # DataFrames with value offset
         transformed_df_value = self.AIR_DF.copy(deep=True)
@@ -931,21 +1196,21 @@ class TimeSeriesDataOpsTest(TimeSeriesBaseTest):
         transformed_df_date_multi[VALUE_COL_NAME + "_1"] = (
             transformed_df_date_multi.y * 2
         )
-        transformed_df_date_concat_multi = self.MULTIVAR_AIR_DF.append(
-            transformed_df_date_multi, ignore_index=True
+        transformed_df_date_concat_multi = pd.concat(
+            [self.MULTIVAR_AIR_DF, transformed_df_date_multi], ignore_index=True
         )
-        transformed_df_date_concat_mixed = self.MULTIVAR_AIR_DF_DATETIME.append(
-            transformed_df_date
+        transformed_df_date_concat_mixed = pd.concat(
+            [self.MULTIVAR_AIR_DF_DATETIME, transformed_df_date]
         )
         transformed_df_date_double_multi = transformed_df_date_double.copy(deep=True)
         transformed_df_date_double_multi[VALUE_COL_NAME + "_1"] = (
             transformed_df_date_double_multi.y * 2
         )
-        transformed_df_date_concat_double_multi = self.MULTIVAR_AIR_DF.append(
-            transformed_df_date_double_multi, ignore_index=True
+        transformed_df_date_concat_double_multi = pd.concat(
+            [self.MULTIVAR_AIR_DF, transformed_df_date_double_multi], ignore_index=True
         )
-        transformed_df_date_concat_double_mixed = self.MULTIVAR_AIR_DF_DATETIME.append(
-            transformed_df_date_double
+        transformed_df_date_concat_double_mixed = pd.concat(
+            [self.MULTIVAR_AIR_DF_DATETIME, transformed_df_date_double]
         )
         # DataFrame with value offset (multivariate)
         transformed_df_value_none_multi = self.MULTIVAR_AIR_DF.copy(deep=True)

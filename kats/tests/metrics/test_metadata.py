@@ -3,19 +3,18 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 # from typing import List, Optional, Union
 from unittest import TestCase
 
 from kats.metrics import metadata
-from kats.metrics.metadata import (
-    inspect,
-    MetricMetadata,
-)
+from kats.metrics.metadata import inspect, MetricMetadata
+
 from parameterized.parameterized import parameterized
 
 
 class MetricsMetadataTest(TestCase):
-
     # pyre-fixme[56]: Pyre was not able to infer the type of the decorator...
     @parameterized.expand(
         [

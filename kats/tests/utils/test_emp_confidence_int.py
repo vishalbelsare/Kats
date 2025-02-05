@@ -3,20 +3,23 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import inspect
 import unittest
-from typing import Any, Dict, List, cast
+from typing import Any, cast, Dict, List
 from unittest import mock, TestCase
 
 import kats.utils.emp_confidence_int  # noqa
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from kats.compat.pandas import assert_frame_equal
 from kats.consts import Params, TimeSeriesData
 from kats.data.utils import load_air_passengers
 from kats.models.model import Model
-from kats.utils.emp_confidence_int import EmpConfidenceInt, BackTesterRollingWindow
+from kats.utils.emp_confidence_int import BackTesterRollingWindow, EmpConfidenceInt
 
 
 ALL_ERRORS = ["mape", "smape", "mae", "mase", "mse", "rmse"]
@@ -117,7 +120,7 @@ _FROZEN_DATA = pd.DataFrame(
 # backtester.run_backtest()
 # _RAW_ERRORS = backtester.raw_errors
 # fmt: off
-_RAW_ERRORS: List[np.ndarray] = [
+_RAW_ERRORS: List[npt.NDArray] = [
     np.array([
         1.33793031e01, 1.56117160e00, -3.43035881e-02, 1.59373281e01,
         1.00730540e01, 3.66296231e01, 4.33868022e01, 3.67005869e01,
@@ -245,7 +248,10 @@ class MyFakeModel(Model[FakeParams]):
         self.unfit = False
 
     # pyre-fixme[15]: `predict` overrides method defined in `Model` inconsistently.
-    def predict(self, steps: int, include_history: bool=False, *_args: Any, **_kwargs: Any) -> pd.DataFrame:
+    # pyre-fixme[14]: `predict` overrides method defined in `Model` inconsistently.
+    def predict(
+        self, steps: int, include_history: bool = False, *_args: Any, **_kwargs: Any
+    ) -> pd.DataFrame:
         if self.unfit:
             raise ValueError("Model hasn't been fit")
         return _FROZEN_DATA

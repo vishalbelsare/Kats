@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """
 Detectors based on predictors, basically work as follows:
 calculate the residual (i.e., difference between predicted and current value),
@@ -12,6 +14,7 @@ In practice, the residuals are often non-normal (sometimes even being
 asymmetric). This module “learns” the distribution of the residual (using kernel
 density estimation), and outputs a false-alarm probability based on it.
 """
+
 from __future__ import annotations
 
 from typing import Optional
@@ -94,9 +97,6 @@ class KDEResidualTranslator:
 
         value = residual.value
         mask = value > value.quantile(self._ignore_below_frac)
-        # pyre-fixme[58]: `&` is not supported for operand types
-        #  `Union[pd.core.frame.DataFrame, pd.core.series.Series]` and
-        #  `Union[pd.core.frame.DataFrame, pd.core.series.Series]`.
         mask &= value < value.quantile(self._ignore_above_frac)
         value = value[mask]
 

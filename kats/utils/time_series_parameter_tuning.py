@@ -3,7 +3,9 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-""" Module that has parameter tuning classes for time series models.
+# pyre-strict
+
+"""Module that has parameter tuning classes for time series models.
 
 This module has a collection of classes. A subset of these classes are parameter tuning
 strategies with their abstract parent class. In addition, there are helper classes,
@@ -15,41 +17,55 @@ such as a factory that creates search strategy objects.
   >>> a_search_strategy = tspt.SearchMethodFactory.create_search_method(...)
 """
 
+import copy
 import logging
 import math
 import time
 import uuid
 from abc import ABC, abstractmethod
-from functools import reduce
+from dataclasses import dataclass
+from functools import partial, reduce
+from multiprocessing import cpu_count
 from multiprocessing.pool import Pool
 from numbers import Number
 from typing import Any, Callable, Dict, List, Optional, Union
 
+import nevergrad as ng
 import pandas as pd
 from ax import Arm, ComparisonOp, Data, OptimizationConfig, SearchSpace
 from ax.core.experiment import Experiment
 from ax.core.generator_run import GeneratorRun
-from ax.core.metric import Metric
+from ax.core.metric import Metric, MetricFetchE, MetricFetchResult
 from ax.core.objective import Objective
 from ax.core.outcome_constraint import OutcomeConstraint
-from ax.modelbridge.discrete import DiscreteModelBridge
-from ax.modelbridge.registry import Models
+from ax.core.trial import BaseTrial
+from ax.global_stopping.strategies.improvement import ImprovementGlobalStoppingStrategy
+from ax.modelbridge.base import Adapter
+from ax.modelbridge.discrete import DiscreteAdapter
+from ax.modelbridge.dispatch_utils import choose_generation_strategy
+from ax.modelbridge.registry import Generators
 from ax.runners.synthetic import SyntheticRunner
-from kats.consts import SearchMethodEnum
+from ax.service.scheduler import Scheduler, SchedulerOptions
 from ax.service.utils.instantiation import InstantiationBase
+from ax.utils.common.result import Err, Ok
+from kats.consts import SearchMethodEnum
 
 # Maximum number of worker processes used to evaluate trial arms in parallel
-MAX_NUM_PROCESSES = 50
+MAX_NUM_PROCESSES = 150
 
 
 def compute_search_cardinality(params_space: List[Dict[str, Any]]) -> float:
     """compute cardinality of search space params"""
     # check if search space is infinite
-    is_infinite = any([param["type"] == "range" for param in params_space])
+    is_infinite = any(param["type"] == "range" for param in params_space)
     if is_infinite:
         return math.inf
     else:
-        return math.prod([len(param["values"]) for param in params_space])
+        res = 1
+        for param in params_space:
+            if "values" in param:
+                res *= len(param["values"])
+        return res
 
 
 class Final(type):
@@ -105,7 +121,8 @@ class TimeSeriesEvaluationMetric(Metric):
     Attributes:
         evaluation_function: The name of the function to be used in evaluation.
         logger: the logger object to log.
-        multiprocessing: Flag to decide whether evaluation will run in parallel.
+        multiprocessing: Flag to decide whether evaluation will run in parallel, or if it's int -1 - use max number of cores, 0 - single process, positive number - max number of cores
+        NOTE: if multiprocessing turned on we expect, that evalution_function will be immutable or serializable to support multiprocessing
 
 
     """
@@ -116,12 +133,14 @@ class TimeSeriesEvaluationMetric(Metric):
         # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         evaluation_function: Callable,
         logger: logging.Logger,
-        multiprocessing: bool = False,
+        multiprocessing: Union[bool, int] = False,
     ) -> None:
         super().__init__(name)
         self.evaluation_function = evaluation_function
         self.logger = logger
         self.multiprocessing = multiprocessing
+        if type(multiprocessing) is bool:
+            self.multiprocessing = -1 if multiprocessing else 0
 
     @classmethod
     def is_available_while_running(cls) -> bool:
@@ -132,14 +151,14 @@ class TimeSeriesEvaluationMetric(Metric):
         return True
 
     # pyre-fixme[2]: Parameter must be annotated.
-    # pyre-fixme[24]: Generic type `dict` expects 2 type parameters, use
-    #  `typing.Dict` to avoid runtime subscripting errors.
+    # pyre-fixme[24]: Generic type `dict` expects 2 type parameters, use `typing.Dict` to avoid runtime subscripting errors.
     def evaluate_arm(self, arm) -> Dict:
         """Evaluates the performance of an arm.
 
         Takes an arm object, gets its parameter values, runs
         evaluation_function and returns what that function returns
         after reformatting it.
+        Contains this is arm level parallelization
 
         Args:
             arm: The arm object to be evaluated.
@@ -185,12 +204,8 @@ class TimeSeriesEvaluationMetric(Metric):
             "sem": evaluation_result[1],
         }
 
-    # pyre-fixme[14]: `fetch_trial_data` overrides method defined in `Metric`
-    #  inconsistently.
-    # pyre-fixme[14]: `fetch_trial_data` overrides method defined in `Metric`
-    #  inconsistently.
-    # pyre-fixme[2]: Parameter must be annotated.
-    def fetch_trial_data(self, trial) -> Data:
+    # This is arm level parallelization incomatible with trial level parallelization, used in Random and GRID searches
+    def fetch_trial_data(self, trial: BaseTrial, **kwargs: Any) -> MetricFetchResult:
         """Calls evaluation of every arm in a trial.
 
         Args:
@@ -200,18 +215,76 @@ class TimeSeriesEvaluationMetric(Metric):
             Data object that has arm names, trial index, evaluation.
         """
 
-        if self.multiprocessing:
-            with Pool(processes=min(len(trial.arms), MAX_NUM_PROCESSES)) as pool:
-                records = pool.map(self.evaluate_arm, trial.arms)
+        try:
+            max_processes = (
+                MAX_NUM_PROCESSES if self.multiprocessing < 0 else self.multiprocessing
+            )  # to avoid all problems with negative values we count the max number of processes
+
+            max_processes = min(len(trial.arms), max_processes, cpu_count())
+
+            if self.multiprocessing and max_processes > 1:
+                with Pool(
+                    processes=min(len(trial.arms), max_processes, cpu_count())
+                ) as pool:
+                    try:
+                        records = pool.map(self.evaluate_arm, trial.arms)
+                    except Exception as e:
+                        self.logger.warning(
+                            f"Unable to evaluate function in multiprocessing mode with exception {e} multiprocessing pool. Trying to copy across threads and run agin"
+                        )
+                        records = pool.map(copy.deepcopy(self.evaluate_arm), trial.arms)
+                    pool.close()
+            else:
+                records = list(map(self.evaluate_arm, trial.arms))
+            if isinstance(records[0], list):
+                # Evaluation result output contains multiple metrics
+                records = [metric for record in records for metric in record]
+            for record in records:
+                record.update({"trial_index": trial.index})
+            return Ok(value=Data(df=pd.DataFrame.from_records(records)))
+        except Exception as e:
+            return Err(
+                MetricFetchE(message=f"Failed to fetch {self.name}", exception=e)
+            )
+
+    # This is grid level parallelization incomatible with arm level parallelization, used in Bayes search
+    def bulk_fetch_experiment_data(
+        self,
+        experiment: Experiment,
+        metrics: List[Metric],
+        trials: Optional[List[BaseTrial]] = None,
+        **kwargs: Any,
+    ) -> Dict[int, Dict[str, MetricFetchResult]]:
+        """Fetch multiple metrics data for multiple trials on an experiment, using
+        instance attributes of the metrics.
+
+        Returns Dict of metric_name => Result
+        Default behavior calls `fetch_trial_data` for each metric.
+        Subclasses should override this to trial data computation for multiple metrics.
+        """
+        trials = list(experiment.trials.values()) if trials is None else trials
+        experiment.validate_trials(trials=trials)
+        trial_indxs = [trial.index for trial in trials if trial.status.expecting_data]
+        trials_records = [
+            (trial, metrics) for trial in trials if trial.status.expecting_data
+        ]
+        max_processes = (
+            MAX_NUM_PROCESSES if self.multiprocessing < 0 else self.multiprocessing
+        )  # to avoid all problems with negative values we count the max number of processes
+        max_processes = min(len(trials_records), max_processes, cpu_count())
+        self.logger.info(
+            f"running bulk_fetch_experiment_data on {len(trials)} trials with  {max_processes} processes."
+        )
+        if max_processes > 1:
+            with Pool(processes=max_processes) as pool:
+                records = pool.starmap(self.bulk_fetch_trial_data, trials_records)
                 pool.close()
         else:
-            records = list(map(self.evaluate_arm, trial.arms))
-        if isinstance(records[0], list):
-            # Evaluation result output contains multiple metrics
-            records = [metric for record in records for metric in record]
-        for record in records:
-            record.update({"trial_index": trial.index})
-        return Data(df=pd.DataFrame.from_records(records))
+            return super().bulk_fetch_experiment_data(
+                experiment=experiment, metrics=metrics, trials=trials, **kwargs
+            )
+        assert len(trial_indxs) == len(records)
+        return {trial_indxs[i]: records[i] for i in range(len(trial_indxs))}
 
 
 class TimeSeriesParameterTuning(ABC):
@@ -239,7 +312,8 @@ class TimeSeriesParameterTuning(ABC):
         experiment_name: Optional[str] = None,
         objective_name: Optional[str] = None,
         outcome_constraints: Optional[List[str]] = None,
-        multiprocessing: bool = False,
+        multiprocessing: Union[bool, int] = False,
+        experiment: Optional[Experiment] = None,
     ) -> None:
         if parameters is None:
             parameters = [{}]
@@ -250,7 +324,9 @@ class TimeSeriesParameterTuning(ABC):
         )
         self.validate_parameters_format(parameters)
         # pyre-fixme[4]: Attribute must be annotated.
-        self.parameters = [InstantiationBase.parameter_from_json(parameter) for parameter in parameters]
+        self.parameters = [
+            InstantiationBase.parameter_from_json(parameter) for parameter in parameters
+        ]
         self.outcome_constraints = (
             [
                 InstantiationBase.outcome_constraint_from_str(str_constraint)
@@ -272,13 +348,20 @@ class TimeSeriesParameterTuning(ABC):
             objective_name if objective_name else f"objective_{self.job_id}"
         )
         self.multiprocessing = multiprocessing
-
-        self._exp = Experiment(
-            name=self.experiment_name,
-            search_space=self._kats_search_space,
-            runner=SyntheticRunner(),
+        if type(multiprocessing) is bool:
+            self.multiprocessing = -1 if multiprocessing else 0
+        self._exp: Experiment = (  # type: ignore
+            experiment
+            if experiment is not None
+            else Experiment(
+                name=self.experiment_name,
+                search_space=self._kats_search_space,
+                runner=SyntheticRunner(),
+            )
         )
+
         self._trial_data = Data()
+        self._list_parameter_value_scores: Optional[pd.DataFrame] = None
         self.logger.info("Experiment is created.")
 
     @staticmethod
@@ -338,8 +421,10 @@ class TimeSeriesParameterTuning(ABC):
         return self._exp.search_space
 
     def generator_run_for_search_method(
+        self,
         # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
-        self, evaluation_function: Callable, generator_run: DiscreteModelBridge
+        evaluation_function: Callable,
+        generator_run: DiscreteAdapter,
     ) -> None:
         """Creates a new batch trial then runs the lastest.
 
@@ -380,7 +465,7 @@ class TimeSeriesParameterTuning(ABC):
         )
 
         # pyre-fixme[6]: Expected `Optional[GeneratorRun]` for 1st param but got
-        #  `DiscreteModelBridge`.
+        #  `DiscreteAdapter`.
         self._exp.new_batch_trial(generator_run=generator_run)
         # We run the most recent batch trial as we only run candidate trials
         self._exp.trials[max(self._exp.trials)].run()
@@ -396,7 +481,7 @@ class TimeSeriesParameterTuning(ABC):
         self,
         # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         evaluation_function: Callable,
-        arm_count: int = -1  # -1 means
+        arm_count: int = -1,  # -1 means
         # create all arms (i.e. all combinations of parameter values)
     ) -> None:
         """A place holder method for users that are still using it.
@@ -434,8 +519,7 @@ class TimeSeriesParameterTuning(ABC):
             "_".join(tpl) for tpl in new_cols[2:]
         ]
         transform["parameters"] = parameters_holder
-        # pyre-fixme[7]: Expected `DataFrame` but got `Union[DataFrame, Series]`.
-        return transform
+        return transform  # type: ignore
 
     def list_parameter_value_scores(
         self, legit_arms_only: bool = False
@@ -452,10 +536,12 @@ class TimeSeriesParameterTuning(ABC):
         Returns:
             A Pandas DataFrame that holds arms populated and evaluated so far.
         """
+        if self._list_parameter_value_scores is not None:
+            return self._list_parameter_value_scores
 
         # For experiments which have not ran generate_evaluate_new_parameter_values,
         # we cannot provide trial data without metrics, so we return empty dataframe
-        if not self._exp.metrics:
+        if self._exp is None or not self._exp.metrics:
             return pd.DataFrame(
                 [],
                 columns=[
@@ -475,9 +561,7 @@ class TimeSeriesParameterTuning(ABC):
             # Deduplicate entries for which there are outcome constraints
             armscore_df = armscore_df.loc[
                 # pyre-ignore[16]: `None` has no attribute `index`.
-                armscore_df.astype(str)
-                .drop_duplicates()
-                .index
+                armscore_df.astype(str).drop_duplicates().index
             ]
             if legit_arms_only:
 
@@ -518,6 +602,17 @@ class TimeSeriesParameterTuning(ABC):
         return armscore_df
 
 
+@dataclass
+class SearchMethodOptions:
+    experiment_name: Optional[str] = None
+    objective_name: Optional[str] = "objective"
+    outcome_constraints: Optional[List[str]] = None
+    multiprocessing: Union[bool, int] = False
+    seed: Optional[int] = None
+    time_limit_sec: float = -1.0
+    target_metric_val: Optional[float] = None
+
+
 class SearchMethodFactory(metaclass=Final):
     """Generates and returns  search strategy object."""
 
@@ -540,6 +635,8 @@ class SearchMethodFactory(metaclass=Final):
         evaluation_function: Optional[Callable] = None,
         bootstrap_arms_for_bayes_opt: Optional[List[Dict[str, Any]]] = None,
         multiprocessing: bool = False,
+        # option for new interface
+        method_options: Optional[SearchMethodOptions] = None,
     ) -> TimeSeriesParameterTuning:
         """The static method of factory class that creates the search method
         object. It does not require the class to be instantiated.
@@ -607,12 +704,25 @@ class SearchMethodFactory(metaclass=Final):
                 bootstrap_arms_for_bayes_opt=bootstrap_arms_for_bayes_opt,
                 outcome_constraints=outcome_constraints,
                 multiprocessing=multiprocessing,
+                method_options=method_options,  # type: ignore
             )
-        else:
-            raise NotImplementedError(
-                "A search method yet to implement is selected. Only grid"
-                " search and random search are implemented."
+        elif selected_search_method == SearchMethodEnum.NEVERGRAD:
+            if method_options is None:
+                method_options = NevergradOptions()
+            if objective_name is not None:
+                method_options.objective_name = objective_name
+            if multiprocessing is not None:
+                method_options.multiprocessing = multiprocessing
+            if seed is not None:
+                method_options.seed = seed
+            return NevergradOptSearch(
+                parameters=parameters,
+                method_options=method_options,  # type: ignore
             )
+        raise NotImplementedError(
+            "A search method yet to implement is selected. Only grid"
+            " search and random search are implemented."
+        )
 
 
 class GridSearch(TimeSeriesParameterTuning):
@@ -641,7 +751,7 @@ class GridSearch(TimeSeriesParameterTuning):
         experiment_name: Optional[str] = None,
         objective_name: Optional[str] = None,
         outcome_constraints: Optional[List[str]] = None,
-        multiprocessing: bool = False,
+        multiprocessing: Union[bool, int] = False,
         # pyre-fixme[2]: Parameter must be annotated.
         **kwargs,
     ) -> None:
@@ -653,7 +763,7 @@ class GridSearch(TimeSeriesParameterTuning):
             multiprocessing,
         )
         # pyre-fixme[4]: Attribute must be annotated.
-        self._factorial = Models.FACTORIAL(
+        self._factorial = Generators.FACTORIAL(
             search_space=self.get_search_space(), check_cardinality=False
         )
         self.logger.info("A factorial model for arm generation is created.")
@@ -715,7 +825,7 @@ class RandomSearch(TimeSeriesParameterTuning):
         seed: Optional[int] = None,
         random_strategy: SearchMethodEnum = SearchMethodEnum.RANDOM_SEARCH_UNIFORM,
         outcome_constraints: Optional[List[str]] = None,
-        multiprocessing: bool = False,
+        multiprocessing: Union[bool, int] = False,
         # pyre-fixme[2]: Parameter must be annotated.
         **kwargs,
     ) -> None:
@@ -734,11 +844,11 @@ class RandomSearch(TimeSeriesParameterTuning):
         self.logger.info("Seed that is used in random search: {seed}".format(seed=seed))
         if random_strategy == SearchMethodEnum.RANDOM_SEARCH_UNIFORM:
             # pyre-fixme[4]: Attribute must be annotated.
-            self._random_strategy_model = Models.UNIFORM(
+            self._random_strategy_model = Generators.UNIFORM(
                 search_space=self.get_search_space(), deduplicate=True, seed=seed
             )
         elif random_strategy == SearchMethodEnum.RANDOM_SEARCH_SOBOL:
-            self._random_strategy_model = Models.SOBOL(
+            self._random_strategy_model = Generators.SOBOL(
                 search_space=self.get_search_space(), deduplicate=True, seed=seed
             )
         else:
@@ -753,8 +863,10 @@ class RandomSearch(TimeSeriesParameterTuning):
         self.logger.info("A RandomSearch object is successfully created.")
 
     def generate_evaluate_new_parameter_values(
+        self,
         # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
-        self, evaluation_function: Callable, arm_count: int = 1
+        evaluation_function: Callable,
+        arm_count: int = 1,
     ) -> None:
         """This method can be called as many times as desired with arm_count in
         desired number. The total number of generated candidates will be equal
@@ -766,11 +878,23 @@ class RandomSearch(TimeSeriesParameterTuning):
         it is not guaranteed that the candidates will be identical across these
         scenarios.
         """
-
         model_run = self._random_strategy_model.gen(n=arm_count)
         self.generator_run_for_search_method(
             evaluation_function=evaluation_function, generator_run=model_run
         )
+
+
+@dataclass
+class BayesMethodOptions(SearchMethodOptions):
+    # default parameters for Global stop strategy
+    max_trials: int = 100
+    min_trials: int = 3
+    window_global_stop_size: int = 3
+    experiment: Optional[Experiment] = None
+    timeout_hours: Optional[int] = None  # timeout in hours for optimization
+    improvement_bar: float = 0.02  # imporvement step for gloabl stop strategy, imporvement bar default value sets for f_score func
+    max_initialization_trials: int = 5
+    seed: Optional[int] = None
 
 
 class BayesianOptSearch(TimeSeriesParameterTuning):
@@ -791,7 +915,7 @@ class BayesianOptSearch(TimeSeriesParameterTuning):
             Name of the objective to be used in Ax's experiment evaluation.
         bootstrap_size: int = 5,
             The number of arms that will be randomly generated to bootstrap the
-            Bayesian optimization.
+            Bayesian optimization. this parameters will be elemnated
         seed: int = None,
             Seed for Ax quasi-random model. If None, then time.time() is set.
         random_strategy: SearchMethodEnum = SearchMethodEnum.RANDOM_SEARCH_UNIFORM,
@@ -801,10 +925,10 @@ class BayesianOptSearch(TimeSeriesParameterTuning):
         outcome_constraints: List[str] = None
             List of constraints defined as strings. Example: ['metric1 >= 0',
             'metric2 < 5]
+
     """
 
-    # pyre-fixme[11]: Annotation `BOTORCH` is not defined as a type.
-    _bayes_opt_model: Optional[Models.BOTORCH] = None
+    _bayes_opt_model: Optional[Adapter] = None
 
     def __init__(
         self,
@@ -818,9 +942,13 @@ class BayesianOptSearch(TimeSeriesParameterTuning):
         random_strategy: SearchMethodEnum = SearchMethodEnum.RANDOM_SEARCH_UNIFORM,
         outcome_constraints: Optional[List[str]] = None,
         multiprocessing: bool = False,
+        method_options: Optional[BayesMethodOptions] = None,
         # pyre-fixme[2]: Parameter must be annotated.
         **kwargs,
     ) -> None:
+        if method_options is not None:
+            self.init_with_options(parameters=parameters, method_options=method_options)
+            return
         super().__init__(
             parameters,
             experiment_name,
@@ -828,6 +956,7 @@ class BayesianOptSearch(TimeSeriesParameterTuning):
             outcome_constraints,
             multiprocessing,
         )
+        self.options: Optional[BayesMethodOptions] = None
         if seed is None:
             seed = int(time.time())
             self.logger.info(
@@ -836,11 +965,11 @@ class BayesianOptSearch(TimeSeriesParameterTuning):
         self.logger.info("Seed that is used in random search: {seed}".format(seed=seed))
         if random_strategy == SearchMethodEnum.RANDOM_SEARCH_UNIFORM:
             # pyre-fixme[4]: Attribute must be annotated.
-            self._random_strategy_model = Models.UNIFORM(
+            self._random_strategy_model = Generators.UNIFORM(
                 search_space=self.get_search_space(), deduplicate=True, seed=seed
             )
         elif random_strategy == SearchMethodEnum.RANDOM_SEARCH_SOBOL:
-            self._random_strategy_model = Models.SOBOL(
+            self._random_strategy_model = Generators.SOBOL(
                 search_space=self.get_search_space(), deduplicate=True, seed=seed
             )
         else:
@@ -870,8 +999,10 @@ class BayesianOptSearch(TimeSeriesParameterTuning):
         self.logger.info(f"Bootstrapping of size = {bootstrap_size} is done.")
 
     def generate_evaluate_new_parameter_values(
+        self,
         # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
-        self, evaluation_function: Callable, arm_count: int = 1
+        evaluation_function: Optional[Callable] = None,
+        arm_count: int = 1,
     ) -> None:
         """This method can be called as many times as desired with arm_count in
         desired number. The total number of generated candidates will be equal
@@ -883,18 +1014,308 @@ class BayesianOptSearch(TimeSeriesParameterTuning):
         it is not guaranteed that the candidates will be identical across these
         scenarios. We re-initiate BOTORCH model on each call.
         """
-
-        self._bayes_opt_model = Models.BOTORCH(
+        if self.options is not None:
+            self.generate_evaluate_new_parameter_values_with_options(
+                evaluation_function=evaluation_function, arm_count=arm_count
+            )
+            return
+        assert evaluation_function
+        self._bayes_opt_model = Generators.BOTORCH_MODULAR(
             experiment=self._exp,
             data=self._trial_data,
         )
         model_run = self._bayes_opt_model.gen(n=arm_count)
         self.generator_run_for_search_method(
             evaluation_function=evaluation_function,
-            # pyre-fixme[6]: Expected `DiscreteModelBridge` for 2nd param but got
+            # pyre-fixme[6]: Expected `DiscreteAdapter` for 2nd param but got
             #  `GeneratorRun`.
             generator_run=model_run,
         )
+
+    def init_with_options(
+        self,
+        parameters: List[Dict[str, Any]],
+        method_options: BayesMethodOptions,
+    ) -> None:
+        super().__init__(
+            parameters,
+            method_options.experiment_name,
+            method_options.objective_name,
+            method_options.outcome_constraints,
+            method_options.multiprocessing,
+            method_options.experiment,
+        )
+        self.options = method_options
+        if self.options.seed is None:
+            self.options.seed = int(time.time())  # type: ignore
+            self.logger.info(
+                "No seed is given by the user, it will be set by the current time"
+            )
+
+    def generate_evaluate_new_parameter_values_with_options(
+        self,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
+        evaluation_function: Optional[Callable] = None,
+        arm_count: int = 1,
+    ) -> None:
+        """In comparison with other generate_evaluate_new_parameter_values for GRID
+        and RANDOM search, this method use Scheduler in order to manipulate epochs
+        of optimization, and do NOT use generator_run_for_search_method function.
+        """
+
+        options: BayesMethodOptions = self.options  # type: ignore
+        outcome_constraints = self.outcome_constraints
+        self.evaluation_function = evaluation_function
+
+        if self.evaluation_function is not None:
+            if outcome_constraints:
+                # Convert dummy base Metrics to TimeseriesEvaluationMetrics
+                self.outcome_constraints = [
+                    OutcomeConstraint(
+                        TimeSeriesEvaluationMetric(
+                            name=oc.metric.name,
+                            evaluation_function=evaluation_function,  # type: ignore
+                            logger=self.logger,
+                            multiprocessing=self.multiprocessing,
+                        ),
+                        op=oc.op,
+                        bound=oc.bound,
+                        relative=oc.relative,
+                    )
+                    for oc in outcome_constraints
+                ]
+            self._exp.optimization_config = OptimizationConfig(
+                objective=Objective(
+                    metric=TimeSeriesEvaluationMetric(
+                        name=str(options.objective_name),
+                        evaluation_function=self.evaluation_function,
+                        logger=self.logger,
+                        multiprocessing=options.multiprocessing,
+                    ),
+                    minimize=True,
+                ),
+                outcome_constraints=self.outcome_constraints,
+            )
+        else:
+            self.evaluation_function = list(
+                self._exp.optimization_config.metrics.values()  # type: ignore
+            )[0].evaluation_function
+        generation_strategy = choose_generation_strategy(
+            search_space=self._exp.search_space,
+            max_parallelism_cap=min(
+                cpu_count(),
+                (
+                    options.multiprocessing
+                    if options.multiprocessing > 0
+                    else options.max_trials
+                ),
+            ),
+            # use_batch_trials option somehow on parallel run limits initial number ob trials to 1 ¯\_(ツ)_/¯
+            # use_batch_trials=bool(self.multiprocessing),
+            experiment=self._exp,
+            optimization_config=self._exp.optimization_config,
+            max_initialization_trials=options.max_initialization_trials,
+        )
+
+        stop_strategy = ImprovementGlobalStoppingStrategy(
+            min_trials=options.min_trials,
+            window_size=options.window_global_stop_size,
+            improvement_bar=options.improvement_bar,
+        )
+        scheduler = Scheduler(
+            experiment=self._exp,
+            generation_strategy=generation_strategy,
+            options=SchedulerOptions(
+                global_stopping_strategy=stop_strategy,
+                run_trials_in_batches=bool(options.multiprocessing),
+            ),
+        )
+
+        scheduler.run_n_trials(
+            max_trials=options.max_trials, timeout_hours=options.timeout_hours
+        )
+        res_data = scheduler.experiment.lookup_data()
+        self._trial_data = Data.from_multiple_data(
+            [
+                self._trial_data,
+                res_data,
+            ]
+        )
+
+
+DEFAULT_BUDGET_NEVERGRAD: int = 100
+
+
+@dataclass
+class NevergradOptions(SearchMethodOptions):
+    # default parameters for Global stop strategy
+    budget: int = -1
+    no_improvement_tolerance: int = 30
+    optimizer_name: str = "DoubleFastGADiscreteOnePlusOne"
+    fixed_params_in_space: bool = False
+
+
+class _LossTargetMetricCriterion:
+    def __init__(self, target_metric_val: float) -> None:
+        self.target_metric_val: float = target_metric_val
+
+    def __call__(self, optimizer: Any) -> bool:  # type: ignore
+        best_param = optimizer.provide_recommendation()
+        if best_param is None or (
+            best_param.loss is None and best_param._losses is None
+        ):
+            return False
+        best_last_losses = best_param.losses
+        if best_last_losses is None:
+            return False
+        return best_last_losses <= self.target_metric_val
+
+
+def get_nevergrad_param_from_ax(
+    ax_params: List[Dict[str, Any]], get_fixed: bool = True
+) -> ng.p.Instrumentation:
+    params_list: Dict[str, Any] = {}  # type: ignore
+
+    for param in ax_params:
+        if param["type"] == "choice":
+            params_list[param["name"]] = ng.p.Choice(param["values"])
+        elif param["type"] == "range":
+            if "bounds" in param.keys():
+                bounds = param["bounds"]
+            elif "values" in param.keys() and len(param["values"]) == 2:
+                bounds = param["values"]
+            else:
+                raise ValueError(f"bad range param: {param}")
+            params_list[param["name"]] = ng.p.Scalar(
+                init=bounds[0],
+                lower=bounds[0],
+                upper=bounds[1],
+            )
+            if "value_type" in param.keys() and param["value_type"] == "int":
+                params_list[param["name"]].set_integer_casting()
+        elif param["type"] == "fixed":
+            if get_fixed:
+                params_list[param["name"]] = ng.p.Constant(param["value"])
+        else:
+            raise ValueError(f"Unknown param type: {param['type']}")
+    return ng.p.Instrumentation(**params_list)
+
+
+def get_fixed_param_from_ax(ax_params: List[Dict[str, Any]]) -> Dict[str, Any]:  # type: ignore
+    params_list: Dict[str, Any] = {
+        param["name"]: param["value"] for param in ax_params if param["type"] == "fixed"
+    }  # type: ignore
+    return params_list
+
+
+class NevergradOptSearch(TimeSeriesParameterTuning):
+    """Nevergrad lib optimization search for hyperparameter tuning.
+
+    Do not instantiate this class using its constructor.
+    Rather use the factory, SearchMethodFactory.
+
+    Attributes:
+        parameters: List[Dict],
+            Defines parameters by their names, their types their optional
+            values for custom parameter search space.
+        experiment_name: str = None,
+            Name of the experiment to be used in Ax's experiment object.
+        objective_name: str = None,
+            Name of the objective to be used in Ax's experiment evaluation.
+        seed: int = None,
+            Seed for Ax quasi-random model. If None, then time.time() is set.
+        random_strategy: SearchMethodEnum = SearchMethodEnum.RANDOM_SEARCH_UNIFORM,
+            By now, we already know that the search method is random search.
+            However, there are optional random strategies: UNIFORM, or SOBOL.
+            This parameter allows to select it.
+        outcome_constraints: List[str] = None
+            List of constraints defined as strings. Example: ['metric1 >= 0',
+            'metric2 < 5]
+    """
+
+    def __init__(
+        self,
+        parameters: List[Dict[str, Any]],
+        method_options: Optional[NevergradOptions] = None,
+        # pyre-fixme[2]: Parameter must be annotated.
+        **kwargs,
+    ) -> None:
+        if method_options is None:
+            method_options = NevergradOptions()
+        super().__init__(
+            parameters,
+            method_options.experiment_name,
+            method_options.objective_name,
+            method_options.outcome_constraints,
+            method_options.multiprocessing,
+        )
+        self.parameters = parameters
+        self.inst: ng.p.Instrumentation = get_nevergrad_param_from_ax(
+            parameters, get_fixed=method_options.fixed_params_in_space
+        )
+        self.fixed_params: Optional[Dict[str, Any]] = None  # type: ignore
+        # if we didn't add parameters to the space we should add them to fixed parameters
+        if not method_options.fixed_params_in_space:
+            self.fixed_params = get_fixed_param_from_ax(parameters)
+        self.options: NevergradOptions = method_options
+        num_workers: int = 1
+        if type(self.options.multiprocessing) is bool:
+            if self.options.multiprocessing:
+                num_workers = cpu_count()
+        else:
+            num_workers = min(cpu_count(), self.options.multiprocessing)
+        num_workers = max(num_workers, 1)
+        budget = self.options.budget
+        if budget < 0:
+            budget = DEFAULT_BUDGET_NEVERGRAD
+        # type: ignore
+        self.optimizer = ng.optimizers.__dict__[self.options.optimizer_name](
+            parametrization=self.inst,
+            budget=budget,
+            num_workers=num_workers,
+        )
+        if self.options.no_improvement_tolerance > 0:
+            self.optimizer.register_callback(
+                "ask",
+                ng.callbacks.EarlyStopping.no_improvement_stopper(
+                    self.options.no_improvement_tolerance
+                ),
+            )
+        if self.options.time_limit_sec > 0:
+            self.optimizer.register_callback(
+                "ask",
+                ng.callbacks.EarlyStopping.timer(self.options.time_limit_sec),
+            )
+        if self.options.target_metric_val is not None:
+            self.optimizer.register_callback(
+                "ask",
+                ng.callbacks.EarlyStopping(
+                    _LossTargetMetricCriterion(self.options.target_metric_val)
+                ),
+            )
+
+    def generate_evaluate_new_parameter_values(
+        self,
+        # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
+        evaluation_function: Callable,
+        arm_count: int = 1,
+    ) -> None:
+        """Evaluate of Nevergrad optimizer"""
+        if self.fixed_params and len(self.fixed_params) > 0:
+            evaluation_function = partial(evaluation_function, **self.fixed_params)
+        recommendation = self.optimizer.minimize(evaluation_function)
+        result_loss = recommendation.loss
+        res_df = pd.DataFrame(
+            {
+                "arm_name": [f"nevergrad_{arm_count}"],
+                "metric_name": [self.options.objective_name],
+                "mean": [result_loss],
+                "sem": [0.0],
+                "trial_index": [arm_count],
+                "parameters": [recommendation.value[1]],
+            }
+        )
+        self._list_parameter_value_scores = res_df
 
 
 class SearchForMultipleSpaces:
@@ -941,8 +1362,11 @@ class SearchForMultipleSpaces:
         }
 
     def generate_evaluate_new_parameter_values(
+        self,
+        selected_model: str,
         # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
-        self, selected_model: str, evaluation_function: Callable, arm_count: int = 1
+        evaluation_function: Callable,
+        arm_count: int = 1,
     ) -> None:
         """Calls generate_evaluate_new_parameter_values() for the search method in
         the search methods collection, search_agent_dict, called by selection_model

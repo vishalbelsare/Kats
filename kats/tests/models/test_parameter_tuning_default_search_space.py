@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import unittest
 from unittest import TestCase
 
@@ -14,9 +16,7 @@ from kats.models.quadratic_model import QuadraticModel
 from kats.models.sarima import SARIMAModel
 from kats.models.theta import ThetaModel
 from kats.models.var import VARModel
-from kats.utils.time_series_parameter_tuning import (
-    TimeSeriesParameterTuning,
-)
+from kats.utils.time_series_parameter_tuning import TimeSeriesParameterTuning
 
 
 class TestParameterTuningDefaultSearchSpace(TestCase):

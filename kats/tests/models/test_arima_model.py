@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import unittest
 from typing import Dict, Optional, Union
 from unittest import TestCase
@@ -14,16 +16,17 @@ from kats.data.utils import load_data  # @manual
 from kats.models.arima import ARIMAModel, ARIMAParams
 from kats.tests.models.test_models_dummy_data import (
     PEYTON_FCST_15_ARIMA_PARAM_1_MODEL_1,
-    PEYTON_FCST_15_ARIMA_PARAM_2_MODEL_1,
-    PEYTON_FCST_15_ARIMA_PARAM_1_MODEL_2,
-    PEYTON_FCST_15_ARIMA_PARAM_2_MODEL_2,
     PEYTON_FCST_15_ARIMA_PARAM_1_MODEL_1_INCL_HIST,
+    PEYTON_FCST_15_ARIMA_PARAM_1_MODEL_2,
+    PEYTON_FCST_15_ARIMA_PARAM_2_MODEL_1,
+    PEYTON_FCST_15_ARIMA_PARAM_2_MODEL_2,
     PEYTON_FCST_30_ARIMA_PARAM_1_MODEL_1,
-    PEYTON_FCST_30_ARIMA_PARAM_2_MODEL_1,
-    PEYTON_FCST_30_ARIMA_PARAM_1_MODEL_2,
-    PEYTON_FCST_30_ARIMA_PARAM_2_MODEL_2,
     PEYTON_FCST_30_ARIMA_PARAM_1_MODEL_1_INCL_HIST,
+    PEYTON_FCST_30_ARIMA_PARAM_1_MODEL_2,
+    PEYTON_FCST_30_ARIMA_PARAM_2_MODEL_1,
+    PEYTON_FCST_30_ARIMA_PARAM_2_MODEL_2,
 )
+
 from parameterized.parameterized import parameterized
 
 STEPS_1 = 15
@@ -192,14 +195,22 @@ class ARIMAModelTest(TestCase):
         res_2 = m.predict(steps=steps_2, include_history=include_history)
         if include_history:
             assert_frame_equal(
+                # pyre-fixme[6]: For 1st argument expected `DataFrame` but got
+                #  `Optional[DataFrame]`.
                 res_1.reset_index(drop=True),
+                # pyre-fixme[6]: For 2nd argument expected `DataFrame` but got
+                #  `Optional[DataFrame]`.
                 truth_1.reset_index(drop=True),
                 check_exact=False,
                 check_less_precise=True,
                 rtol=0.001,
             )
             assert_frame_equal(
+                # pyre-fixme[6]: For 1st argument expected `DataFrame` but got
+                #  `Optional[DataFrame]`.
                 res_2.reset_index(drop=True),
+                # pyre-fixme[6]: For 2nd argument expected `DataFrame` but got
+                #  `Optional[DataFrame]`.
                 truth_2.reset_index(drop=True),
                 check_exact=False,
                 check_less_precise=True,

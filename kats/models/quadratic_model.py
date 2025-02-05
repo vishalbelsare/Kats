@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """Forecasting with quadratic model
 
 The quadratic (non-linear) regression model explores a linear relationship
@@ -34,8 +36,9 @@ class QuadraticModelParams(Params):
         super().__init__()
         self.alpha = alpha
         logging.debug(
-            "Initialized QuadraticModel parameters. "
-            "alpha:{alpha}".format(alpha=alpha)
+            "Initialized QuadraticModel parameters. " "alpha:{alpha}".format(
+                alpha=alpha
+            )
         )
 
     def validate_params(self) -> None:
@@ -82,8 +85,9 @@ class QuadraticModel(Model[QuadraticModelParams]):
     def fit(self) -> None:
         """fit Quadratic Model."""
         logging.debug(
-            "Call fit() with parameters: "
-            "alpha:{alpha}".format(alpha=self.params.alpha)
+            "Call fit() with parameters: " "alpha:{alpha}".format(
+                alpha=self.params.alpha
+            )
         )
 
         # pyre-fixme[16]: `Optional` has no attribute `time`.
@@ -119,11 +123,12 @@ class QuadraticModel(Model[QuadraticModelParams]):
         model = self.model
         assert model is not None
         logging.debug(
-            "Call predict() with parameters. "
-            "steps:{steps}, kwargs:{kwargs}".format(steps=steps, kwargs=kwargs)
+            "Call predict() with parameters. " "steps:{steps}, kwargs:{kwargs}".format(
+                steps=steps, kwargs=kwargs
+            )
         )
-
-        self.freq = kwargs.get("freq", "D")
+        # pyre-fixme[16]: `Optional` has no attribute `time`.
+        self.freq = kwargs.get("freq", pd.infer_freq(self.data.time))
         self.include_history = include_history
 
         if include_history:
@@ -143,7 +148,6 @@ class QuadraticModel(Model[QuadraticModelParams]):
         self.y_fcst_upper = pd.Series(y_fcst_upper, copy=False)
 
         # create future dates
-        # pyre-fixme[16]: `Optional` has no attribute `time`.
         last_date = self.data.time.max()
         dates = pd.date_range(start=last_date, periods=steps + 1, freq=self.freq)
         self.dates = dates[dates != last_date]

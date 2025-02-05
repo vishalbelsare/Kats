@@ -3,18 +3,31 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import logging
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from kats.consts import TimeSeriesData
+
+from kats.consts import (
+    DataError,
+    DataIrregularGranularityError,
+    IRREGULAR_GRANULARITY_ERROR,
+    ParameterError,
+    TimeSeriesData,
+)
+
+# pyre-fixme[21]: Could not find name `STL` in `statsmodels.tsa.seasonal`.
 from statsmodels.tsa.seasonal import seasonal_decompose, STL
 
 # from numpy.typing import ArrayLike
 ArrayLike = Union[np.ndarray, Sequence[float]]
 Figsize = Tuple[int, int]
+
+_log: logging.Logger = logging.getLogger(__name__)
 
 
 def _identity(x: ArrayLike) -> ArrayLike:
@@ -34,7 +47,8 @@ class TimeSeriesDecomposition:
         method: `STL decompostion` or `seasonal_decompose`
     """
 
-    freq: Optional[str] = None
+    # pyre-fixme[11]: Annotation `Timedelta` is not defined as a type.
+    freq: Optional[Union[str, pd.Timedelta]] = None
     results: Optional[Dict[str, TimeSeriesData]] = None
     decomposition: str
     method: Callable[[pd.DataFrame], Dict[str, pd.DataFrame]]
@@ -57,10 +71,12 @@ class TimeSeriesDecomposition:
         method: str = "STL",
         **kwargs: Any,
     ) -> None:
-        if not isinstance(data.value, pd.Series):
-            msg = f"Only support univariate time series, but got {type(data.value)}."
+        if not isinstance(data.value, pd.Series) and method != "seasonal_decompose":
+            msg = f"Only support univariate time series, but got {type(data.value)}. \
+                For multivariate, use method='seasonal_decompose'."
             logging.error(msg)
             raise ValueError(msg)
+
         self.data = data
         if decomposition in ("additive", "multiplicative"):
             self.decomposition = decomposition
@@ -100,37 +116,38 @@ class TimeSeriesDecomposition:
         Internal function to interpolate time series and infer frequency of
         time series required for decomposition.
         """
+        original = self.data.to_dataframe()
+        original.set_index(self.data.time_col_name, inplace=True)
 
-        original = pd.DataFrame(
-            list(self.data.value),
-            index=pd.to_datetime(self.data.time),
-            columns=["y"],
-            copy=False,
-        )
-
-        if pd.infer_freq(original.index) is None:
+        if self.data.infer_freq_robust() is None:
             original = original.asfreq("D")
             logging.info("Setting frequency to Daily since it cannot be inferred")
-
-        self.freq = pd.infer_freq(original.index)
+            self.freq = pd.infer_freq(original.index)
+        else:
+            self.freq = self.data.infer_freq_robust()
 
         original.interpolate(
             method="polynomial", limit_direction="both", order=3, inplace=True
         )
 
         ## This is a hack since polynomial interpolation is not working here
-        if any(original["y"].isna()):
+        if any(original.isna()):
             original.interpolate(method="linear", limit_direction="both", inplace=True)
 
-        # pyre-ignore[7]: Expected `DataFrame` but got
-        #  `Union[pd.core.frame.DataFrame, pd.core.series.Series]`.
         return original
 
     def _get_period(self) -> Optional[int]:
         period = self.period
         freq = self.freq
         if period is None:
-            if freq is not None and "T" in freq:
+            if freq is not None and isinstance(freq, str) and "T" in freq:
+                logging.warning(
+                    """Seasonal Decompose cannot handle sub day level granularity.
+                    Please consider setting period yourself based on the input data.
+                    Defaulting to a period of 2."""
+                )
+                period = 2
+            elif freq is not None and isinstance(freq, pd.Timedelta) and freq.days == 0:
                 logging.warning(
                     """Seasonal Decompose cannot handle sub day level granularity.
                     Please consider setting period yourself based on the input data.
@@ -169,8 +186,9 @@ class TimeSeriesDecomposition:
             data = np.log(original)
             post_transform = np.exp
 
+        # pyre-fixme[16]: Module `seasonal` has no attribute `STL`.
         result = STL(
-            data,
+            data.squeeze(),
             period=period,
             seasonal=self.seasonal,
             trend=self.trend,
@@ -192,12 +210,13 @@ class TimeSeriesDecomposition:
 
     def __decompose(self, original: pd.DataFrame) -> Dict[str, TimeSeriesData]:
         output = self.method(original)
-        return {
-            name: TimeSeriesData(
-                ts.reset_index(), time_col_name=self.data.time_col_name
-            )
-            for name, ts in output.items()
-        }
+        ret = {}
+        for name, ts in output.items():
+            tmp = pd.DataFrame(ts)
+            if original.shape[1] > 1:
+                tmp.columns = original.columns
+            ret[name] = TimeSeriesData(value=tmp, time=original.index)
+        return ret
 
     def decomposer(self) -> Dict[str, TimeSeriesData]:
         """Decompose the time series.
@@ -238,8 +257,6 @@ class TimeSeriesDecomposition:
         fig, axs = plt.subplots(
             nrows=4, ncols=1, figsize=figsize, sharex=sharex, **kwargs
         )
-        titles = [trend_title, seasonality_title, residual_title]
-        parts = ["trend", "seasonal", "rem"]
 
         axs[0].plot(
             self.data.time.values,
@@ -248,7 +265,9 @@ class TimeSeriesDecomposition:
         )
         axs[0].set_title(original_title)
 
-        for part, ax, title in zip(parts, axs, titles):
+        titles = [trend_title, seasonality_title, residual_title]
+        parts = ["trend", "seasonal", "rem"]
+        for part, ax, title in zip(parts, axs[1:], titles):
             ts: TimeSeriesData = results[part]
             ax.plot(ts.time.values, ts.value.values, linewidth=linewidth)
             ax.set_title(title)
@@ -256,3 +275,215 @@ class TimeSeriesDecomposition:
         axs[3].set_xlabel(xlabel)
         plt.subplots_adjust(**subplot_kwargs)
         return (axs[0], axs[1], axs[2], axs[3])
+
+
+class SeasonalityHandler:
+    """
+    SeasonalityHandler is a class that do timeseries STL decomposition for detecors
+    Attributes:
+        data: TimeSeriesData that need to be decomposed
+        seasonal_period: str, default value is 'daily'. Other possible values: 'hourly', 'weekly', 'biweekly', 'monthly', 'yearly' or integer which represent amoutn of seconds
+
+    >>> # Example usage:
+    >>> from kats.utils.simulator import Simulator
+    >>> sim = Simulator(n=120, start='2018-01-01')
+    >>> ts = sim.level_shift_sim(cp_arr = [60], level_arr=[1.35, 1.05], noise=0.05, seasonal_period=7, seasonal_magnitude=0.575)
+    >>> sh = SeasonalityHandler(data=ts, seasonal_period='weekly')
+    >>> sh.get_seasonality()
+    >>> sh.remove_seasonality()
+    """
+
+    PERIOD_MAP: Dict[str, int] = {
+        "hourly": 1 * 60 * 60,
+        "daily": 24 * 60 * 60,
+        "weekly": 7 * 24 * 60 * 60,
+        "biweekly": 14 * 24 * 60 * 60,
+        "monthly": 30 * 24 * 60 * 60,
+        "yearly": 365 * 24 * 60 * 60,
+    }
+
+    def __init__(
+        self,
+        data: TimeSeriesData,
+        seasonal_period: Union[str, int] = "daily",
+        ignore_irregular_freq: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        if len(data) < 7:
+            msg = "Input data for SeasonalityHandler must have at least 7 data points."
+            _log.error(msg)
+            raise DataError(msg)
+
+        self.data = data
+
+        if isinstance(seasonal_period, str):
+            if seasonal_period not in SeasonalityHandler.PERIOD_MAP:
+                msg = "Invalid seasonal_period str value, possible values are integer or 'hourly', 'daily', 'weekly', 'biweekly', 'monthly', and 'yearly'"
+                logging.error(msg)
+                raise ParameterError(msg)
+            self.seasonal_period: int = SeasonalityHandler.PERIOD_MAP[seasonal_period]
+        elif type(seasonal_period) is int:
+            self.seasonal_period: int = seasonal_period
+        else:
+            msg = "Invalid seasonal_period type, possible values are integer or 'hourly', 'daily', 'weekly', 'biweekly', 'monthly', and 'yearly'"
+            logging.error(msg)
+            raise ParameterError(msg)
+
+        self.low_pass_jump_factor: float = kwargs.get("lpj_factor", 0.15)
+        self.trend_jump_factor: float = kwargs.get("tj_factor", 0.15)
+
+        if ignore_irregular_freq:
+            self.frequency: pd.Timedelta = self.data.infer_freq_robust()
+
+        else:
+            self.frequency: pd.Timedelta = self.data.freq_to_timedelta()
+            if self.frequency is None or self.frequency is pd.NaT:
+                # Use the top frequency if any, when not able to infer from data.
+                freq_counts = (
+                    self.data.time.diff().value_counts().sort_values(ascending=False)
+                )
+                if freq_counts.iloc[0] >= int(len(self.data)) * 0.5 - 1:
+                    # pyre-fixme[4]: Attribute must be annotated.
+                    self.frequency = freq_counts.index[0]
+                else:
+                    _log.debug(f"freq_counts: {freq_counts}")
+                    raise DataIrregularGranularityError(IRREGULAR_GRANULARITY_ERROR)
+
+        self.frequency_sec: int = int(self.frequency.total_seconds())
+        self.frequency_sec_str: str = str(self.frequency_sec) + "s"
+
+        # calculate resample base in second level
+        time0 = pd.to_datetime(self.data.time[0])
+        # calculate remainder as resampling base
+        resample_base_sec = (
+            time0.day * 24 * 60 * 60
+            + time0.hour * 60 * 60
+            + time0.minute * 60
+            + time0.second
+        ) % self.frequency_sec
+
+        self.decomposer_input: TimeSeriesData = self.data.interpolate(
+            freq=self.frequency_sec_str,
+            base=resample_base_sec,
+        )
+
+        data_time_idx = self.decomposer_input.time.isin(self.data.time)
+        if len(self.decomposer_input.time[data_time_idx]) != len(self.data):
+            raise DataIrregularGranularityError(IRREGULAR_GRANULARITY_ERROR)
+
+        self.period: int = min(
+            int(self.seasonal_period / self.frequency.total_seconds()),
+            len(self.data) // 2,
+        )
+
+        if self.period < 2:
+            _log.info(f"The period {self.period} is less than 2. Setting to 7.")
+            self.period = 7
+
+        self.decomp: Optional[dict[str, Any]] = None
+
+        self.ifmulti: bool = False
+        # for multi-variate TS
+        if len(self.data.value.values.shape) != 1:
+            self.ifmulti = True
+            self.num_seq: int = self.data.value.values.shape[1]
+
+        self.data_season = TimeSeriesData(time=self.data.time, value=self.data.value)
+        self.data_nonseason = TimeSeriesData(time=self.data.time, value=self.data.value)
+
+    def _decompose(self) -> None:
+        if not self.ifmulti:
+            decomposer = TimeSeriesDecomposition(
+                self.decomposer_input,
+                period=max(self.period, 2),
+                robust=True,
+                seasonal_deg=0,
+                trend_deg=1,
+                low_pass_deg=1,
+                low_pass_jump=max(
+                    int((self.period + 1) * self.low_pass_jump_factor), 1
+                ),
+                seasonal_jump=1,
+                trend_jump=max(int((self.period + 1) * self.trend_jump_factor), 1),
+            )
+
+            self.decomp = decomposer.decomposer()
+            return
+
+        self._decompose_multi()
+
+    def _decompose_multi(self) -> None:
+        self.decomp = {}
+        for i in range(self.num_seq):
+            temp_ts = TimeSeriesData(
+                time=self.decomposer_input.time,
+                value=pd.Series(self.decomposer_input.value.values[:, i], copy=False),
+            )
+            decomposer = TimeSeriesDecomposition(
+                temp_ts,
+                period=max(self.period, 2),
+                robust=True,
+                seasonal_deg=0,
+                trend_deg=1,
+                low_pass_deg=1,
+                low_pass_jump=max(
+                    int((self.period + 1) * self.low_pass_jump_factor), 1
+                ),
+                seasonal_jump=1,
+                trend_jump=max(int((self.period + 1) * self.trend_jump_factor), 1),
+            )
+            assert self.decomp is not None
+            # pyre-fixme[16]: `Optional` has no attribute `__setitem__`.
+            self.decomp[str(i)] = decomposer.decomposer()
+
+    def remove_seasonality(self) -> TimeSeriesData:
+        if self.decomp is None:
+            self._decompose()
+        if not self.ifmulti:
+            decomp = self.decomp
+            assert decomp is not None
+            data_time_idx = decomp["rem"].time.isin(self.data_nonseason.time)
+
+            self.data_nonseason.value = pd.Series(
+                decomp["rem"][data_time_idx].value
+                + decomp["trend"][data_time_idx].value,
+                name=self.data_nonseason.value.name,
+                copy=False,
+            )
+            return self.data_nonseason
+        decomp = self.decomp
+        assert decomp is not None
+        data_time_idx = decomp[str(0)]["rem"].time.isin(self.data_nonseason.time)
+        for i in range(self.num_seq):
+            self.data_nonseason.value.iloc[:, i] = pd.Series(
+                decomp[str(i)]["rem"][data_time_idx].value
+                + decomp[str(i)]["trend"][data_time_idx].value,
+                name=self.data_nonseason.value.iloc[:, i].name,
+                copy=False,
+            )
+
+        return self.data_nonseason
+
+    def get_seasonality(self) -> TimeSeriesData:
+        if self.decomp is None:
+            self._decompose()
+        decomp = self.decomp
+        assert decomp is not None
+        if not self.ifmulti:
+            data_time_idx = decomp["seasonal"].time.isin(self.data_season.time)
+            self.data_season.value = pd.Series(
+                decomp["seasonal"][data_time_idx].value,
+                name=self.data_season.value.name,
+                copy=False,
+            )
+            return self.data_season
+
+        data_time_idx = decomp[str(0)]["seasonal"].time.isin(self.data_season.time)
+        for i in range(self.num_seq):
+            self.data_season.value.iloc[:, i] = pd.Series(
+                decomp[str(i)]["seasonal"][data_time_idx].value,
+                name=self.data_season.value.iloc[:, i].name,
+                copy=False,
+            )
+
+        return self.data_season

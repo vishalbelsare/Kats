@@ -3,10 +3,13 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from kats.consts import Params, TimeSeriesData
 from kats.models.model import Model
@@ -126,7 +129,7 @@ class SARIMAModel(Model[SARIMAParams]):
         params: :class:`SARIMAParams` for model parameters.
     """
 
-    start_params: Optional[np.ndarray] = None
+    start_params: Optional[npt.NDArray] = None
     transformed: Optional[bool] = None
     includes_fixed: Optional[bool] = None
     cov_type: Optional[str] = None
@@ -135,7 +138,7 @@ class SARIMAModel(Model[SARIMAParams]):
     maxiter: Optional[int] = None
     full_output: Optional[bool] = None
     disp: Optional[bool] = None
-    callback: Optional[Callable[[np.ndarray], None]] = None
+    callback: Optional[Callable[[npt.NDArray], None]] = None
     return_params: Optional[bool] = None
     optim_score: Optional[str] = None
     optim_complex_step: Optional[bool] = None
@@ -146,9 +149,9 @@ class SARIMAModel(Model[SARIMAParams]):
     alpha: float = 0.05
     fcst_df: Optional[pd.DataFrame] = None
     freq: Optional[float] = None
-    y_fcst: Optional[np.ndarray] = None
-    y_fcst_lower: Optional[np.ndarray] = None
-    y_fcst_upper: Optional[np.ndarray] = None
+    y_fcst: Optional[npt.NDArray] = None
+    y_fcst_lower: Optional[npt.NDArray] = None
+    y_fcst_upper: Optional[npt.NDArray] = None
     dates: Optional[pd.DatetimeIndex] = None
 
     def __init__(
@@ -165,7 +168,7 @@ class SARIMAModel(Model[SARIMAParams]):
 
     def fit(
         self,
-        start_params: Optional[np.ndarray] = None,
+        start_params: Optional[npt.NDArray] = None,
         transformed: bool = True,
         includes_fixed: bool = False,
         cov_type: Optional[str] = None,
@@ -174,7 +177,7 @@ class SARIMAModel(Model[SARIMAParams]):
         maxiter: int = 50,
         full_output: bool = True,
         disp: bool = False,
-        callback: Optional[Callable[[np.ndarray], None]] = None,
+        callback: Optional[Callable[[npt.NDArray], None]] = None,
         return_params: bool = False,
         optim_score: Optional[str] = None,
         optim_complex_step: bool = True,

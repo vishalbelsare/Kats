@@ -135,6 +135,22 @@ air_passengers_ts = TimeSeriesData(air_passengers_df)
 features = TsFeatures().transform(air_passengers_ts)
 ```
 
+## Citing Kats
+
+If you use Kats in your work or research, please use the following BibTeX entry.
+
+```
+@software{Jiang_KATS_2022,
+author = {Jiang, Xiaodong and Srivastava, Sudeep and Chatterjee, Sourav and Yu, Yang and Handler, Jeffrey and Zhang, Peiyi and Bopardikar, Rohan and Li, Dawei and Lin, Yanjun and Thakore, Uttam and Brundage, Michael and Holt, Ginger and Komurlu, Caner and Nagalla, Rakshita and Wang, Zhichao and Sun, Hechao and Gao, Peng and Cheung, Wei and Gao, Jun and Wang, Qi and Guerard, Marius and Kazemi, Morteza and Chen, Yulin and Zhou, Chong and Lee, Sean and Laptev, Nikolay and Levendovszky, Tihamér and Taylor, Jake and Qian, Huijun and Zhang, Jian and Shoydokova, Aida and Singh, Trisha and Zhu, Chengjun and Baz, Zeynep and Bergmeir, Christoph and Yu, Di and Koylan, Ahmet and Jiang, Kun and Temiyasathit, Ploy and Yurtbay, Emre},
+license = {MIT License},
+month = {3},
+title = {{Kats}},
+url = {https://github.com/facebookresearch/Kats},
+version = {0.2.0},
+year = {2022}
+}
+```
+
 ## Changelog
 
 ### Version 0.2.0
@@ -160,11 +176,11 @@ features = TsFeatures().transform(air_passengers_ts)
 * Initial release
 
 ## Contributors
+Kats is currentely maintaned by community with the main contributions and leading from [Nickolai Kniazev](https://www.linkedin.com/in/nickknyazev/) and Peter Shaffery
 
 Kats is a project with several skillful researchers and engineers contributing to it.
-
-Kats is currently maintained by [Xiaodong Jiang](https://www.linkedin.com/in/xdjiang/) with major contributions coming
-from many talented individuals in various forms and means. A non-exhaustive but growing list needs to mention: [Sudeep Srivastava](https://www.linkedin.com/in/sudeep-srivastava-2129484/), [Sourav Chatterjee](https://www.linkedin.com/in/souravc83/), [Jeff Handler](https://www.linkedin.com/in/jeffhandl/), [Rohan Bopardikar](https://www.linkedin.com/in/rohan-bopardikar-30a99638), [Dawei Li](https://www.linkedin.com/in/lidawei/), [Yanjun Lin](https://www.linkedin.com/in/yanjun-lin/), [Yang Yu](https://www.linkedin.com/in/yangyu2720/), [Michael Brundage](https://www.linkedin.com/in/michaelb), [Caner Komurlu](https://www.linkedin.com/in/ckomurlu/), [Rakshita Nagalla](https://www.linkedin.com/in/rakshita-nagalla/), [Zhichao Wang](https://www.linkedin.com/in/zhichaowang/), [Hechao Sun](https://www.linkedin.com/in/hechao-sun-83b9ba4b/), [Peng Gao](https://www.linkedin.com/in/peng-gao-9137a24b/), [Wei Cheung](https://www.linkedin.com/in/weizhicheung/), [Jun Gao](https://www.linkedin.com/in/jun-gao-71352b64/), [Qi Wang](https://www.linkedin.com/in/qi-wang-9231a783/), [Morteza Kazemi](https://www.linkedin.com/in/morteza-kazemi-pmp-csm/), [Tihamér Levendovszky](https://www.linkedin.com/in/tiham%C3%A9r-levendovszky-29639b5/), [Jian Zhang](https://www.linkedin.com/in/jian-zhang-73718917/), [Ahmet Koylan](https://www.linkedin.com/in/ahmetburhan/), [Kun Jiang](https://www.linkedin.com/in/kunqiang-jiang-ph-d-0988aa1b/), [Aida Shoydokova](https://www.linkedin.com/in/ashoydok/), [Ploy Temiyasathit](https://www.linkedin.com/in/nutcha-temiyasathit/), Sean Lee, [Nikolay Pavlovich Laptev](http://www.nikolaylaptev.com/), [Peiyi Zhang](https://www.linkedin.com/in/pyzhang/), [Emre Yurtbay](https://www.linkedin.com/in/emre-yurtbay-27516313a/), [Daniel Dequech](https://www.linkedin.com/in/daniel-dequech/), [Rui Yan](https://www.linkedin.com/in/rui-yan/), [William Luo](https://www.linkedin.com/in/wqcluo/), [Marius Guerard](https://www.linkedin.com/in/mariusguerard/), and [Pietari Pulkkinen](https://www.linkedin.com/in/pietaripulkkinen/).
+Kats was started and built by [Xiaodong Jiang](https://www.linkedin.com/in/xdjiang/) with major contributions coming
+from many talented individuals in various forms and means. A non-exhaustive but growing list needs to mention: [Sudeep Srivastava](https://www.linkedin.com/in/sudeep-srivastava-2129484/), [Sourav Chatterjee](https://www.linkedin.com/in/souravc83/), [Jeff Handler](https://www.linkedin.com/in/jeffhandl/), [Rohan Bopardikar](https://www.linkedin.com/in/rohan-bopardikar-30a99638), [Dawei Li](https://www.linkedin.com/in/lidawei/), [Yanjun Lin](https://www.linkedin.com/in/yanjun-lin/), [Yang Yu](https://www.linkedin.com/in/yangyu2720/), [Michael Brundage](https://www.linkedin.com/in/michaelb), [Caner Komurlu](https://www.linkedin.com/in/ckomurlu/), [Rakshita Nagalla](https://www.linkedin.com/in/rakshita-nagalla/), [Zhichao Wang](https://www.linkedin.com/in/zhichaowang/), [Hechao Sun](https://www.linkedin.com/in/hechao-sun-83b9ba4b/), [Peng Gao](https://www.linkedin.com/in/peng-gao-9137a24b/), [Wei Cheung](https://www.linkedin.com/in/weizhicheung/), [Jun Gao](https://www.linkedin.com/in/jun-gao-71352b64/), [Qi Wang](https://www.linkedin.com/in/qi-wang-9231a783/), [Morteza Kazemi](https://www.linkedin.com/in/morteza-kazemi-pmp-csm/), [Tihamér Levendovszky](https://www.linkedin.com/in/tiham%C3%A9r-levendovszky-29639b5/), [Jian Zhang](https://www.linkedin.com/in/jian-zhang-73718917/), [Ahmet Koylan](https://www.linkedin.com/in/ahmetburhan/), [Kun Jiang](https://www.linkedin.com/in/kunqiang-jiang-ph-d-0988aa1b/), [Aida Shoydokova](https://www.linkedin.com/in/ashoydok/), [Ploy Temiyasathit](https://www.linkedin.com/in/nutcha-temiyasathit/), Sean Lee, [Nikolay Pavlovich Laptev](http://www.nikolaylaptev.com/), [Peiyi Zhang](https://www.linkedin.com/in/pyzhang/), [Emre Yurtbay](https://www.linkedin.com/in/emre-yurtbay-27516313a/), [Daniel Dequech](https://www.linkedin.com/in/daniel-dequech/), [Rui Yan](https://www.linkedin.com/in/rui-yan/), [William Luo](https://www.linkedin.com/in/wqcluo/), [Marius Guerard](https://www.linkedin.com/in/mariusguerard/), [Pietari Pulkkinen](https://www.linkedin.com/in/pietaripulkkinen/), [Uttam Thakore](https://www.linkedin.com/in/uttam-thakore/), [Trisha Singh](https://www.linkedin.com/in/trishasingh2696/), [Huijun Qian](https://www.linkedin.com/in/huijun-qian-0845a958/), [Chengjun Zhu](https://www.linkedin.com/in/chengjunzhu/), [Di Yu](https://www.linkedin.com/in/diyu05/), [Zeynep Erkin Baz](https://www.linkedin.com/in/zeynep-erkin-baz-51198a21), and [Christoph Bergmeir](https://au.linkedin.com/in/christoph-bergmeir-00711a14/).
 
 ## License
 

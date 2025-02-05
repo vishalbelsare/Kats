@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """This is a file with functions which turn time series into ML features.
 
 Typical use case is to create various features for the nowcasting model.
@@ -16,6 +18,7 @@ The features are rolling, i.e. they are the times series as well.
 from typing import Dict, Optional
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 
@@ -168,7 +171,7 @@ def MACD(
     return df
 
     # pyre-fixme[3]: Return type must be annotated.
-    def _ewma(arr: np.ndarray, span: int, min_periods: int):
+    def _ewma(arr: npt.NDArray, span: int, min_periods: int):
         """
         Exponentialy weighted moving average specified by a decay ``window``
         to provide better adjustments for small windows via:
@@ -176,7 +179,7 @@ def MACD(
                    (1 + (1-a) + (1-a)^2 + ... + (1-a)^n).
 
         Args:
-        arr : np.ndarray; A single dimenisional numpy array.
+        arr : npt.NDArray; A single dimenisional numpy array.
         span : int; The decay window, or 'span'.
         min_periods: int; Minimum amount of data points we'd like to include in the output.
 
@@ -204,7 +207,7 @@ def MACD(
 
     # pyre-fixme[3]: Return type must be annotated.
     def _get_nowcasting_np(
-        x: np.ndarray,
+        x: npt.NDArray,
         window: int = 5,
         n_fast: int = 12,
         n_slow: int = 21,
@@ -316,9 +319,11 @@ def BBANDS(df, n: int, column: str = "y") -> pd.DataFrame:
     close = df[column]
     MA = pd.Series(close.rolling(n).mean(), copy=False)
     MSD = pd.Series(close.rolling(n).std(), copy=False)
+    # pyre-fixme[58]: `*` is not supported for operand types `int` and `Series`.
     b1 = 4 * MSD / MA
     B1 = pd.Series(b1, name="BollingerBand1_" + str(n), copy=False)
     df = df.join(B1)
+    # pyre-fixme[58]: `*` is not supported for operand types `int` and `Series`.
     b2 = (close - MA + 2 * MSD) / (4 * MSD)
     B2 = pd.Series(b2, name="BollingerBand2_" + str(n), copy=False)
     df = df.join(B2)

@@ -3,42 +3,86 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import logging
 import os
 from functools import partial
-from unittest import TestCase, mock
+from typing import Dict, List, Union
+from unittest import mock, TestCase
+from unittest.mock import MagicMock, patch
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import torch
 from kats.consts import TimeSeriesData
 from kats.models.globalmodel.backtester import GMBackTester, GMBackTesterExpandingWindow
-from kats.models.globalmodel.data_processor import GMDataLoader, GMBatch
+from kats.models.globalmodel.data_processor import GMBatch, GMDataLoader
 from kats.models.globalmodel.ensemble import GMEnsemble, load_gmensemble_from_file
 from kats.models.globalmodel.model import GMModel, load_gmmodel_from_file
 from kats.models.globalmodel.serialize import (
     global_model_to_json,
     load_global_model_from_json,
 )
+from kats.models.globalmodel.stdmodel import STDGlobalModel
 from kats.models.globalmodel.utils import (
-    LSTM2Cell,
-    S2Cell,
-    DilatedRNNStack,
-    PinballLoss,
-    GMParam,
     AdjustedPinballLoss,
-    GMFeature,
-    gmparam_from_string,
-    pad_ts,
+    DilatedRNNStack,
     fill_missing_value_na,
     get_filters,
+    GMFeature,
+    GMParam,
+    gmparam_from_string,
+    LSTM2Cell,
+    pad_ts,
+    PinballLoss,
+    S2Cell,
     split,
 )
+from kats.tsfeatures.tsfeatures import TsFeatures
+
 from parameterized.parameterized import parameterized
 
-# pyre-fixme[3]: Return type must be annotated.
-# pyre-fixme[2]: Parameter must be annotated.
-def get_ts(n, start_time, seed: int = 560, freq: str = "D", has_nans: bool = True):
+
+def _MOCK_GET_TSFEATURES(
+    x: npt.NDArray,
+    time: npt.NDArray,
+) -> torch.Tensor:
+    """
+    Mocks the private method of GMFeature so that a reduced set of features is computed and the test stops timing out
+    """
+    features = []
+
+    for i in range(len(x)):
+        features.append(
+            np.log(
+                np.abs(
+                    list(
+                        # pyre-fixme[16]: `List` has no attribute `values`.
+                        TsFeatures(selected_features=["length", "mean"])
+                        .transform(
+                            TimeSeriesData(
+                                pd.DataFrame(
+                                    {"time": time[i], "value": x[i]}, copy=False
+                                ).dropna()  # NaNs would mess-up tsfeatures
+                            )
+                        )
+                        .values()
+                    )
+                )
+            )
+        )
+    features = torch.tensor(features)
+    # filter out NaN and inf
+    features[torch.isnan(features)] = 0.0
+    features[torch.isinf(features)] = 0.0
+    return features
+
+
+def get_ts(
+    n: int, start_time: str, seed: int = 560, freq: str = "D", has_nans: bool = True
+) -> TimeSeriesData:
     """
     Helper function for generating TimeSeriesData.
     """
@@ -52,7 +96,6 @@ def get_ts(n, start_time, seed: int = 560, freq: str = "D", has_nans: bool = Tru
     return TimeSeriesData(time=t, value=val)
 
 
-# pyre-fixme[3]: Return type must be annotated.
 def _gm_mock_predict_func(
     TSs: TimeSeriesData,
     steps: int,
@@ -60,7 +103,7 @@ def _gm_mock_predict_func(
     len_quantile: int,
     raw: bool = True,
     test_batch_size: int = 500,
-):
+) -> Dict[int, List[npt.NDArray]]:
     """
     Helper function for building predict method for mock GMModel.
     """
@@ -69,9 +112,19 @@ def _gm_mock_predict_func(
     return {i: [np.random.randn(n)] * m for i in range(len(TSs))}
 
 
-# pyre-fixme[3]: Return type must be annotated.
-# pyre-fixme[2]: Parameter must be annotated.
-def get_gmmodel_mock(gmparam):
+def _gm_mock_predict_func_2(
+    TSs: Dict[int, TimeSeriesData], steps: int
+) -> Dict[int, pd.DataFrame]:
+    tpd = pd.DataFrame(
+        {
+            "time": pd.date_range("2021-05-06", periods=steps),
+            "fcst_quantile_0.5": np.arange(steps),
+        }
+    )
+    return {k: tpd for k in TSs}
+
+
+def get_gmmodel_mock(gmparam: GMParam) -> mock.MagicMock:
     """
     Helper function for building mock object for GMModel
     """
@@ -81,6 +134,12 @@ def get_gmmodel_mock(gmparam):
         fcst_window=gmparam.fcst_window,
         len_quantile=len(gmparam.quantile),
     )
+    return gm_mock
+
+
+def get_gmmodel_mock_2(gmparam: GMParam) -> mock.MagicMock:
+    gm_mock = mock.MagicMock()
+    gm_mock.predict.side_effect = _gm_mock_predict_func_2
     return gm_mock
 
 
@@ -407,9 +466,12 @@ class PinballLossTest(TestCase):
 
 
 class GMFeatureTest(TestCase):
-    def test_gmfeature(self) -> None:
+    @patch("kats.models.globalmodel.utils.GMFeature._get_tsfeatures")
+    def test_gmfeature(self, _get_ts_features_mock: MagicMock) -> None:
         x = np.row_stack([np.abs(ts.value.values[:10]) for ts in TSs])
         time = np.row_stack([ts.time.values[:10] for ts in TSs])
+
+        _get_ts_features_mock.return_value = _MOCK_GET_TSFEATURES(x, time)
 
         gmfs = [
             GMFeature(feature_type="tsfeatures"),
@@ -663,7 +725,6 @@ class AdjustedPinballLossTest(TestCase):
 
 class GMModelTest(TestCase):
     def test_model(self) -> None:
-
         GMParam_collects = [
             # RNN GM
             GMParam(
@@ -1021,9 +1082,41 @@ class GMEnsembleTest(TestCase):
         )
 
 
+class STDGlobalModelTest(TestCase):
+    # pyre-fixme
+    @parameterized.expand(
+        [
+            [{"decomposition_model": "stl"}],
+            [{"decomposition_model": "seasonal_decompose"}],
+            [
+                {
+                    "decomposition_model": "prophet",
+                    "fit_trend": True,
+                    "decomposition": "multiplicative",
+                }
+            ],
+        ]
+    )
+    def test_stdgm(self, stdparams: Dict[str, Union[str, bool]]) -> None:
+        # mock a single global model
+        gmparam = GMParam(
+            freq="d",
+            model_type="s2s",
+            input_window=5,
+            fcst_window=3,
+            seasonality=2,
+            h_size=5,
+            state_size=10,
+        )
+        gm = get_gmmodel_mock_2(gmparam)
+        # pyre-fixme Incompatible parameter type [6]: In call `STDGlobalModel.__init__`, for 1st positional only parameter expected `Optional[GMParam]` but got `Union[bool, str]`.
+        stdgm = STDGlobalModel(**stdparams)
+        stdgm.load_global_model(gm)
+        _ = stdgm.predict(TSs, steps=5)
+
+
 class GMBackTesterExpandingWindowTest(TestCase):
     def test_GMBTEW(self) -> None:
-
         gmparam = GMParam(
             input_window=10, fcst_window=7, seasonality=6, fcst_step_num=2, freq="D"
         )
@@ -1165,7 +1258,8 @@ class SerializeTest(TestCase):
             loaded_model = load_global_model_from_json(model_str)
             fcst = m.predict(TSs[0], steps=3)[0]
             loaded_fcst = loaded_model.predict(TSs[0], steps=3)[0]
-            self.assertTrue(
-                fcst.equals(loaded_fcst),
-                "Forecasts generated by the loaded model is different from that generated from the original model.",
+            pd.testing.assert_frame_equal(
+                fcst,
+                loaded_fcst,
+                obj="Forecasts generated by the loaded model is different from that generated from the original model.",
             )

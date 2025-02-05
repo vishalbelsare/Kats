@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import builtins
 import sys
 import unittest
@@ -12,34 +14,35 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
-from kats.compat import statsmodels, pandas
+from kats.compat import pandas, statsmodels
 from kats.consts import TimeSeriesData
-from kats.data.utils import load_data, load_air_passengers
+from kats.data.utils import load_air_passengers, load_data
 from kats.models.prophet import ProphetModel, ProphetParams
 from kats.tests.models.test_models_dummy_data import (
-    NONSEASONAL_INPUT,
-    NONSEASONAL_FUTURE_DF,
-    AIR_FCST_30_PROPHET_SM_11,
-    AIR_FCST_30_PROPHET_CAP_AND_FLOOR_SM_11,
-    PEYTON_FCST_30_PROPHET_CAP_AND_FLOOR_SM_11,
-    AIR_FCST_30_PROPHET_INCL_HIST_SM_11,
-    PEYTON_FCST_15_PROPHET_INCL_HIST_SM_11,
     AIR_FCST_15_PROPHET_LOGISTIC_CAP_SM_11,
-    PEYTON_FCST_30_PROPHET_DAILY_CAP_SM_11,
-    AIR_FCST_30_PROPHET_CUSTOM_SEASONALITY_SM_11,
-    PEYTON_FCST_30_PROPHET_CUSTOM_SEASONALITY_SM_11,
-    NONSEASONAL_FCST_15_PROPHET_ARG_FUTURE_SM_11,
-    AIR_FCST_30_PROPHET_SM_12,
-    AIR_FCST_30_PROPHET_CAP_AND_FLOOR_SM_12,
-    PEYTON_FCST_30_PROPHET_CAP_AND_FLOOR_SM_12,
-    AIR_FCST_30_PROPHET_INCL_HIST_SM_12,
-    PEYTON_FCST_15_PROPHET_INCL_HIST_SM_12,
     AIR_FCST_15_PROPHET_LOGISTIC_CAP_SM_12,
-    PEYTON_FCST_30_PROPHET_DAILY_CAP_SM_12,
+    AIR_FCST_30_PROPHET_CAP_AND_FLOOR_SM_11,
+    AIR_FCST_30_PROPHET_CAP_AND_FLOOR_SM_12,
+    AIR_FCST_30_PROPHET_CUSTOM_SEASONALITY_SM_11,
     AIR_FCST_30_PROPHET_CUSTOM_SEASONALITY_SM_12,
-    PEYTON_FCST_30_PROPHET_CUSTOM_SEASONALITY_SM_12,
+    AIR_FCST_30_PROPHET_INCL_HIST_SM_11,
+    AIR_FCST_30_PROPHET_INCL_HIST_SM_12,
+    AIR_FCST_30_PROPHET_SM_11,
+    AIR_FCST_30_PROPHET_SM_12,
+    NONSEASONAL_FCST_15_PROPHET_ARG_FUTURE_SM_11,
     NONSEASONAL_FCST_15_PROPHET_ARG_FUTURE_SM_12,
+    NONSEASONAL_FUTURE_DF,
+    NONSEASONAL_INPUT,
+    PEYTON_FCST_15_PROPHET_INCL_HIST_SM_11,
+    PEYTON_FCST_15_PROPHET_INCL_HIST_SM_12,
+    PEYTON_FCST_30_PROPHET_CAP_AND_FLOOR_SM_11,
+    PEYTON_FCST_30_PROPHET_CAP_AND_FLOOR_SM_12,
+    PEYTON_FCST_30_PROPHET_CUSTOM_SEASONALITY_SM_11,
+    PEYTON_FCST_30_PROPHET_CUSTOM_SEASONALITY_SM_12,
+    PEYTON_FCST_30_PROPHET_DAILY_CAP_SM_11,
+    PEYTON_FCST_30_PROPHET_DAILY_CAP_SM_12,
 )
+
 from parameterized.parameterized import parameterized
 
 
@@ -106,14 +109,14 @@ class ProphetModelTest(TestCase):
 
         # pyre-fixme[2]: Parameter annotation cannot be `Any`.
         def mock_prophet_import(module: Any, *args: Any, **kwargs: Any) -> None:
-            if module == "fbprophet":
+            if module == "prophet":
                 raise ImportError
             else:
                 return original_import_fn(module, *args, **kwargs)
 
         cls.mock_imports = patch("builtins.__import__", side_effect=mock_prophet_import)
 
-    def test_fbprophet_not_installed(self) -> None:
+    def test_prophet_not_installed(self) -> None:
         # Unload prophet module so its imports can be mocked as necessary
         del sys.modules["kats.models.prophet"]
 
@@ -174,7 +177,6 @@ class ProphetModelTest(TestCase):
             self.assertEqual(exp_val, actual_defaults[param], msg)
 
     def test_invalid_params(self) -> None:
-
         self.assertRaises(ValueError, ProphetParams, growth="logistic")
         self.assertRaises(
             ValueError,
@@ -476,6 +478,11 @@ class ProphetModelTest(TestCase):
 
         m_daily.predict(steps=30, include_history=True, freq="D", future=future)
         m_daily.plot()
+
+    def test_seed(self) -> None:
+        m = ProphetModel(TEST_DATA["daily"]["ts"], TEST_DATA["daily"]["params"])
+        m.fit(seed=0)
+        m.predict(steps=30, freq="MS", seed=0)
 
 
 if __name__ == "__main__":

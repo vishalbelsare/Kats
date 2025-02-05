@@ -3,14 +3,15 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, Type, Union, Optional, Sequence, Callable
+from typing import Callable, Dict, Optional, Sequence, Type, Union
 
 import numpy as np
 import pandas as pd
-from kats.consts import Params
-from kats.consts import _log_error, TimeSeriesData
+from kats.consts import _log_error, Params, TimeSeriesData
 from kats.detectors.detector import DetectorModel
 from kats.models.model import Model
 

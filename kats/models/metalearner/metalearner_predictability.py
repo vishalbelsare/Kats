@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """A module for meta-learner predictability.
 
 This module contains the class :class:`MetaLearnPredictability` for meta-learner predictability. This class predicts whether a time series is predictable or not.
@@ -11,10 +13,11 @@ The predictability of a time series is determined by whether the forecasting err
 
 import ast
 import logging
-from typing import Dict, List, Optional, Union, Any
+from typing import Any, Dict, List, Optional, Union
 
 import joblib
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from kats.consts import TimeSeriesData
 from kats.tsfeatures.tsfeatures import TsFeatures
@@ -160,7 +163,9 @@ class MetaLearnPredictability:
 
         self.rescale = True
         features = (self.features.values - self.features_mean) / self.features_std
-        self.features = pd.DataFrame(features, columns=self.features.columns, copy=False)
+        self.features = pd.DataFrame(
+            features, columns=self.features.columns, copy=False
+        )
 
     def train(
         self,
@@ -259,12 +264,18 @@ class MetaLearnPredictability:
         self._clf_threshold = clf_threshold
         return ans
 
-    def pred(self, source_ts: TimeSeriesData, ts_rescale: bool = True) -> bool:
+    def pred(
+        self,
+        source_ts: TimeSeriesData,
+        ts_rescale: bool = True,
+        **tsfeatures_kwargs: Any,
+    ) -> bool:
         """Predict whether a time series is predicable or not.
 
         Args:
             source_ts: :class:`kats.consts.TimeSeriesData` object representing the new time series data.
             ts_scale: Optional; A boolean to specify whether or not to rescale time series data (i.e., normalizing it with its maximum vlaue) before calculating features. Default is True.
+            **tsfeatures_kwargs: keyword arguments for TsFeatures.
 
         Returns:
             A boolean representing whether the time series is predictable or not.
@@ -279,7 +290,7 @@ class MetaLearnPredictability:
             ts.value /= ts.value.max()
             msg = "Successful scaled! Each value of TS has been divided by the max value of TS."
             logging.info(msg)
-        features = TsFeatures().transform(ts)
+        features = TsFeatures(**tsfeatures_kwargs).transform(ts)
         # pyre-fixme[16]: `List` has no attribute `values`.
         x = np.array(list(features.values()))
         if np.sum(np.isnan(x)) > 0:
@@ -292,8 +303,8 @@ class MetaLearnPredictability:
         return ans
 
     def pred_by_feature(
-        self, source_x: Union[np.ndarray, List[np.ndarray], pd.DataFrame]
-    ) -> np.ndarray:
+        self, source_x: Union[npt.NDArray, List[npt.NDArray], pd.DataFrame]
+    ) -> npt.NDArray:
         """Predict whether a list of time series are predicable or not given their time series features.
         Args:
             source_x: the time series features of the time series that one wants to predict, can be a np.ndarray, a list of np.ndarray or a pd.DataFrame.

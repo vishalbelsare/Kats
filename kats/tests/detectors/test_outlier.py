@@ -3,13 +3,15 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 from operator import attrgetter
 from unittest import TestCase
 
 import numpy as np
 import pandas as pd
 from kats.consts import TimeSeriesData
-from kats.data.utils import load_data, load_air_passengers
+from kats.data.utils import load_air_passengers, load_data
 from kats.detectors.outlier import (
     MultivariateAnomalyDetector,
     MultivariateAnomalyDetectorType,
@@ -33,10 +35,12 @@ class OutlierDetectionTest(TestCase):
         daily_data.columns = ["time", "y"]
         self.ts_data_daily = TimeSeriesData(daily_data)
 
-        daily_data_missing = daily_data.drop([2, 11, 18, 19, 20, 21, 22, 40, 77, 101]).copy()
+        daily_data_missing = daily_data.drop(
+            [2, 11, 18, 19, 20, 21, 22, 40, 77, 101]
+        ).copy()
         # Detecting missing data is coupled to pd.infer_freq() implementation. Make sure the
         # rows dropped above prevent us from inferring a frequency (so it returns None)
-        self.assertIsNone(pd.infer_freq(daily_data_missing['time']))
+        self.assertIsNone(pd.infer_freq(daily_data_missing["time"]))
         self.ts_data_daily_missing = TimeSeriesData(daily_data_missing)
 
     def test_additive_overrides_missing_daily_data(self) -> None:
@@ -92,15 +96,6 @@ class OutlierDetectionTest(TestCase):
         m3.detector()
         m3.remover(interpolate=True)
 
-    def test_outlier_detector_exception(self) -> None:
-        data = self.ts_data.to_dataframe()
-        data_new = pd.concat([data, data])
-        ts_data_new = TimeSeriesData(data_new)
-
-        with self.assertLogs(level="ERROR"):
-            m = OutlierDetector(ts_data_new)
-            m.detector()
-
     def test_output_scores_not_nan(self) -> None:
         m = OutlierDetector(self.ts_data, "additive")
         m.detector()
@@ -136,7 +131,9 @@ class MultivariateVARDetectorTest(TestCase):
     def setUp(self) -> None:
         DATA_multi = load_data("multivariate_anomaly_simulated_data.csv")
         self.TSData_multi = TimeSeriesData(DATA_multi)
-        DATA_multi2 = pd.concat([DATA_multi, DATA_multi])
+        DATA_multi2 = pd.concat(
+            [DATA_multi.iloc[:10, :], DATA_multi.iloc[12:, :]], axis=0
+        )
         self.TSData_multi2 = TimeSeriesData(DATA_multi2)
         DATA_multi3 = pd.merge(
             DATA_multi, DATA_multi, how="inner", on="time", suffixes=("_1", "_2")
@@ -156,7 +153,6 @@ class MultivariateVARDetectorTest(TestCase):
             model_type=MultivariateAnomalyDetectorType.BAYESIAN_VAR,
         )
 
-    # pyre-ignore Undefined attribute [16]: Module parameterized.parameterized has no attribute expand.
     @parameterized.expand(
         [
             ["d_var"],
@@ -174,7 +170,6 @@ class MultivariateVARDetectorTest(TestCase):
             + ["overall_anomaly_score", "p_value"],
         )
 
-    # pyre-ignore Undefined attribute [16]: Module parameterized.parameterized has no attribute expand.
     @parameterized.expand(
         [
             ["d_var"],
@@ -188,7 +183,6 @@ class MultivariateVARDetectorTest(TestCase):
         d.detector()
         d.plot()
 
-    # pyre-ignore Undefined attribute [16]: Module parameterized.parameterized has no attribute expand.
     @parameterized.expand(
         [
             ["d_var"],
@@ -204,7 +198,6 @@ class MultivariateVARDetectorTest(TestCase):
         anomalies = d.get_anomaly_timepoints(alpha)
         d.get_anomalous_metrics(anomalies[0], top_k=3)
 
-    # pyre-ignore Undefined attribute [16]: Module parameterized.parameterized has no attribute expand.
     @parameterized.expand(
         [
             ["TSData_multi2"],

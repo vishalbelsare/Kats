@@ -6,7 +6,7 @@
 
 import os
 
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 
 # read long description from README
@@ -34,7 +34,7 @@ setup(
     author="facebook",
     author_email="iamxiaodong@fb.com",
     url="https://github.com/facebookresearch/Kats",
-    download_url="https://github.com/facebookresearch/Kats/archive/refs/tags/v0.1.tar.gz",
+    download_url="https://github.com/facebookresearch/Kats/archive/refs/tags/v0.2.tar.gz",
     keywords=[
         "time series",
         "forecasting",
@@ -48,8 +48,8 @@ setup(
         "Intended Audience :: Science/Research",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
         "License :: OSI Approved :: MIT License",
-        "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
     ],
     long_description=long_description,
     long_description_content_type="text/markdown",

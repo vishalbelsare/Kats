@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 """
 This file implements the Bayesian Online Changepoint Detection
 algorithm as a DetectorModel, to provide a common interface.
@@ -104,7 +106,12 @@ class BocpdDetectorModel(DetectorModel):
         if historical_data is not None:
             historical_data.extend(data, validate=False)
             data = TimeSeriesData(
-                pd.DataFrame({"time": list(historical_data.time), "value": list(historical_data.value)})
+                pd.DataFrame(
+                    {
+                        "time": list(historical_data.time),
+                        "value": list(historical_data.value),
+                    }
+                )
             )
 
         bocpd_model = BOCPDetector(data=data)
@@ -216,7 +223,7 @@ class BocpdTrendDetectorModel(DetectorModel):
         )
 
         level_arr = fit1.level
-        trend_arr = fit1.slope
+        trend_arr = fit1.trend
         fit_arr = [x + y for x, y in zip(level_arr, trend_arr)]
         fit_diff = np.diff(fit_arr)
         fit_diff = np.concatenate(([fit_diff[0]], fit_diff))

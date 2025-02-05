@@ -3,13 +3,15 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 from unittest import TestCase
 
 import numpy as np
 from kats.compat import statsmodels
 from kats.data.utils import load_air_passengers
 from kats.detectors.trend_mk import MKDetector
-from kats.models.theta import ThetaParams, ThetaModel
+from kats.models.theta import ThetaModel, ThetaParams
 from kats.utils.cupik import Pipeline
 
 
@@ -18,7 +20,6 @@ class cupikTest(TestCase):
         self.TSData = load_air_passengers()
 
     def test_mkdetector(self) -> None:
-
         # We will be using 2 different scenarios to test if the results
         # are the same between a directly called MKDetector and one that
         # is called via CuPiK

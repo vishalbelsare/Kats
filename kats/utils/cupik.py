@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import logging
 import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -13,6 +15,7 @@ else:
     from typing_extensions import Protocol
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from kats.consts import TimeSeriesData
 
@@ -21,19 +24,16 @@ class Step(Protocol):
     __type__: str
     data: TimeSeriesData
 
-    def remover(self, interpolate: bool) -> TimeSeriesData:
-        ...
+    def remover(self, interpolate: bool) -> TimeSeriesData: ...
 
-    def transform(self, data: TimeSeriesData) -> object:
-        ...
+    def transform(self, data: TimeSeriesData) -> object: ...
 
     def fit(
         self,
-        x: Union[pd.DataFrame, np.ndarray],
-        y: Optional[Union[pd.Series, np.ndarray]],
-        **kwargs: Any
-    ) -> List[TimeSeriesData]:
-        ...
+        x: Union[pd.DataFrame, npt.NDArray],
+        y: Optional[Union[pd.Series, npt.NDArray]],
+        **kwargs: Any,
+    ) -> List[TimeSeriesData]: ...
 
 
 PipelineStep = Tuple[str, Step]
@@ -55,7 +55,7 @@ class Pipeline:
     remove: bool = False
     useFeatures: bool = False
     extra_fitting_params: Optional[Dict[str, Any]] = None
-    y: Optional[Union[np.ndarray, pd.Series]] = None
+    y: Optional[Union[npt.NDArray, pd.Series]] = None
 
     def __init__(self, steps: List[PipelineStep]) -> None:
         """
@@ -118,8 +118,10 @@ class Pipeline:
                 logging.error(msg)
                 raise ValueError(msg)
             s.data.time = pd.to_datetime(s.data.time)
+            # pyre-fixme[16]: `Step` has no attribute `__subtype__`.
             if s.__subtype__ == "outlier":
                 extra_params["pipe"] = True
+            # pyre-fixme[16]: `Step` has no attribute `detector`.
             metadata.append(s.detector(**extra_params))
             if (
                 self.remove and s.__subtype__ == "outlier"
@@ -200,7 +202,7 @@ class Pipeline:
         self,
         step: Step,
         data: List[TimeSeriesData],
-        y: Optional[Union[pd.Series, np.ndarray]],
+        y: Optional[Union[pd.Series, npt.NDArray]],
     ) -> List[TimeSeriesData]:
         """
         Internal function for fitting sklearn model on a tabular data with features
@@ -268,7 +270,7 @@ class Pipeline:
         self,
         data: Union[TimeSeriesData, List[TimeSeriesData]],
         params: Optional[Dict[str, Any]] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> Union[TimeSeriesData, List[TimeSeriesData]]:
         """
         This function is the external function for user to fit the pipeline

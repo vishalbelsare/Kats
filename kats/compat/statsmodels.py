@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import logging
 from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
@@ -12,6 +14,7 @@ from kats.compat import compat
 from statsmodels.tsa import holtwinters
 
 ArrayLike = Union[np.ndarray, Sequence[float]]
+# pyre-fixme[5]: Global expression must be annotated.
 Frequency = Union[int, str, pd.Timedelta]
 
 
@@ -38,7 +41,6 @@ class HoltWintersResults(holtwinters.HoltWintersResults):
                 results.level,
                 results.trend,
                 results.season,
-
                 results.params_formatted,
                 results.resid,
                 results.k,
@@ -62,6 +64,7 @@ class ExponentialSmoothing(holtwinters.ExponentialSmoothing):
         *,
         bounds: Optional[Dict[str, Tuple[float, float]]] = None,
         dates: Optional[Union[ArrayLike, pd.DatetimeIndex, pd.PeriodIndex]] = None,
+        # pyre-fixme[11]: Annotation `Frequency` is not defined as a type.
         freq: Optional[Frequency] = None,
         initialization_method: str = "estimated",
         initial_level: Optional[float] = None,
@@ -69,7 +72,7 @@ class ExponentialSmoothing(holtwinters.ExponentialSmoothing):
         initial_trend: Optional[float] = None,
         missing: str = "none",
         seasonal_periods: Optional[int] = None,
-        use_boxcox: bool = False
+        use_boxcox: bool = False,
     ) -> None:
         if version < "0.12":
             self._use_boxcox = use_boxcox
@@ -80,7 +83,7 @@ class ExponentialSmoothing(holtwinters.ExponentialSmoothing):
                 )
             if initialization_method != "missing":
                 logging.warning(
-                    "ExponentialSmoothing parameter 'initialization_method' not supported by statsmodels"
+                    f"ExponentialSmoothing parameter 'initialization_method' not supported by statsmodels, detected {version.version}"
                 )
             if initial_level is not None:
                 logging.warning(
@@ -99,21 +102,21 @@ class ExponentialSmoothing(holtwinters.ExponentialSmoothing):
                     "ExponentialSmoothing parameter 'seasonal_periods' not supported by statsmodels"
                 )
             super().__init__(
-                endog,
-                trend,
-                damped_trend,
-                seasonal,
-                seasonal_periods,
-                dates,
-                freq,
-                missing,
+                endog=endog,
+                trend=trend,
+                damped_trend=damped_trend,
+                seasonal=seasonal,
+                seasonal_periods=seasonal_periods,
+                dates=dates,
+                freq=freq,
+                missing=missing,
             )
         else:
             super().__init__(
-                endog,
-                trend,
-                damped_trend,
-                seasonal,
+                endog=endog,
+                trend=trend,
+                damped_trend=damped_trend,
+                seasonal=seasonal,
                 seasonal_periods=seasonal_periods,
                 initialization_method=initialization_method,
                 initial_level=initial_level,

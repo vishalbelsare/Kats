@@ -3,6 +3,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import logging
 import time
 from multiprocessing import cpu_count
@@ -11,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import joblib
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import torch
 from kats.consts import TimeSeriesData
@@ -57,7 +60,6 @@ class GMEnsemble:
         multi: bool = False,
         max_core: Optional[int] = None,
     ) -> None:
-
         if not isinstance(gmparam, GMParam):
             msg = f"gmparam should be GMParam object but receives {type(gmparam)}."
             logging.error(msg)
@@ -207,7 +209,6 @@ class GMEnsemble:
         split_data = split(self.splits, self.overlap, train_TSs, valid_TSs)
         # multi processing
         if self.multi:
-
             t0 = time.time()
             rds = np.random.randint(1, int(10000 * self.model_num), self.model_num)
             model_params = [
@@ -255,9 +256,10 @@ class GMEnsemble:
         self,
         # pyre-fixme[2]: Parameter annotation cannot be `Any`.
         idx: Any,
-        fcsts: List[np.ndarray],
+        fcsts: List[npt.NDArray],
         steps: int,
         raw: bool,
+        # pyre-fixme[11]: Annotation `Timestamp` is not defined as a type.
         first_timestamp: Optional[pd.Timestamp] = None,
         col_names: Optional[List[str]] = None,
     ) -> Tuple[Any, Any]:
@@ -292,7 +294,7 @@ class GMEnsemble:
         steps: int,
         test_batch_size: int = 500,
         raw: bool = False,
-    ) -> Dict[Any, Union[pd.DataFrame, List[np.ndarray]]]:
+    ) -> Dict[Any, Union[pd.DataFrame, List[npt.NDArray]]]:
         """Generate forecasts for the target time series.
 
         Args:
@@ -504,7 +506,7 @@ class GMEnsemble:
             tmp = test_valid_TSs[k].value.values
             tmp_step = len(tmp) // fcst_window + int(len(tmp) % fcst_window != 0)
             tmp_fcst_length = tmp_step * fcst_window
-            actuals = np.full(tmp_fcst_length, np.nan, np.float)
+            actuals = np.full(tmp_fcst_length, np.nan, float)
             actuals[: len(tmp)] = tmp
             for j in range(tmp_step):
                 tmp_actuals = actuals[j * fcst_window : (j + 1) * fcst_window]

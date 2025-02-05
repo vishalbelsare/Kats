@@ -3,35 +3,38 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-strict
+
 import collections
 import logging
 import random
+from typing import Dict, List
 from unittest import TestCase
+from unittest.mock import patch
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
-from ax.modelbridge.registry import Models, SearchSpace
+from ax.modelbridge.registry import Generators, SearchSpace
 from ax.service.utils.instantiation import InstantiationBase
 from kats.consts import TimeSeriesData
 from kats.models.arima import ARIMAModel
 from kats.models.holtwinters import HoltWintersModel, HoltWintersParams
 from kats.models.metalearner.get_metadata import GetMetaData
 from kats.models.metalearner.metalearner_hpt import MetaLearnHPT
-from kats.models.metalearner.metalearner_modelselect import (
-    MetaLearnModelSelect,
-)
-from kats.models.metalearner.metalearner_predictability import (
-    MetaLearnPredictability,
-)
+from kats.models.metalearner.metalearner_modelselect import MetaLearnModelSelect
+from kats.models.metalearner.metalearner_predictability import MetaLearnPredictability
 from kats.models.prophet import ProphetModel, ProphetParams
 from kats.models.sarima import SARIMAModel, SARIMAParams
 from kats.models.stlf import STLFModel, STLFParams
 from kats.models.theta import ThetaModel, ThetaParams
 from kats.tests.models.test_models_dummy_data import (
-    METALEARNING_TEST_T1,
-    METALEARNING_TEST_T2,
     METALEARNING_TEST_FEATURES,
+    METALEARNING_TEST_METADATA_STR,
     METALEARNING_TEST_MULTI,
+    METALEARNING_TEST_T1,
+    METALEARNING_TEST_T1_FEATURES,
+    METALEARNING_TEST_T2,
 )
 
 # TS which is too short
@@ -81,8 +84,9 @@ base_models = {
 
 t1 = TimeSeriesData(METALEARNING_TEST_T1)
 t2 = TimeSeriesData(METALEARNING_TEST_T2)
-# pyre-fixme[5]: Global expression must be annotated.
-feature = np.array(METALEARNING_TEST_FEATURES)
+feature: npt.NDArray = np.array(METALEARNING_TEST_FEATURES)
+num_features: int = feature.shape[1]
+feature_names: List[str] = list(METALEARNING_TEST_T1_FEATURES.keys())
 
 
 # pyre-fixme[3]: Return type must be annotated.
@@ -91,16 +95,19 @@ def generate_meta_data(n):
     # generate meta data to initialize MetaLearnModelSelect
     np.random.seed(560)
     random.seed(560)
-    spaces = {m: base_models[m].get_parameter_search_space() for m in base_models}
+    spaces = {m: model.get_parameter_search_space() for m, model in base_models.items()}
 
     m = len(base_models)
     res = np.abs(np.random.uniform(0, 1.0, n * m)).reshape(n, -1)
-    features = np.random.randn(n * 40).reshape(n, -1)
+    features = np.random.randn(n * num_features).reshape(n, -1)
     generators = {
-        m: Models.UNIFORM(
-            SearchSpace([InstantiationBase.parameter_from_json(item) for item in spaces[m]])
+        m: Generators.UNIFORM(
+            SearchSpace(
+                [InstantiationBase.parameter_from_json(item) for item in space]
+            ),
+            deduplicate=False,
         )
-        for m in spaces
+        for m, space in spaces.items()
     }
     models = list(base_models.keys())
     ans = []
@@ -114,7 +121,7 @@ def generate_meta_data(n):
             {
                 "hpt_res": hpt,
                 "best_model": np.random.choice(models),
-                "features": {str(k): features[i, k] for k in range(features.shape[1])},
+                "features": {str(k): features[i, k] for k in range(num_features)},
             }
         )
     return ans
@@ -122,15 +129,16 @@ def generate_meta_data(n):
 
 # pyre-fixme[3]: Return type must be annotated.
 # pyre-fixme[2]: Parameter must be annotated.
-def generate_meta_data_by_model(model, n, d=40):
+def generate_meta_data_by_model(model, n, d=num_features):
     random.seed(560)
     np.random.seed(560)
     model = model.lower()
     if model in base_models:
         model = base_models[model]
     space = model.get_parameter_search_space()
-    generator = Models.UNIFORM(
-        SearchSpace([InstantiationBase.parameter_from_json(item) for item in space])
+    generator = Generators.UNIFORM(
+        SearchSpace([InstantiationBase.parameter_from_json(item) for item in space]),
+        deduplicate=False,
     )
     x = np.random.randn(n * d).reshape(n, -1)
     x = pd.DataFrame(x)
@@ -144,7 +152,14 @@ METALEARNING_METADATA = generate_meta_data(35)
 # pyre-fixme[5]: Global expression must be annotated.
 METALEARNING_METADATA_BY_MODEL = {
     t: generate_meta_data_by_model(t, 150)
-    for t in ["arima", "holtwinters", "sarima", "theta", "stlf", "prophet"]
+    for t in [
+        "arima",
+        "holtwinters",
+        "sarima",
+        "theta",
+        "stlf",
+        "prophet",
+    ]
 }
 
 candidate_models = {
@@ -161,6 +176,10 @@ candidate_params = {
     "theta": ThetaParams,
     "stlf": STLFParams,
     "sarima": SARIMAParams,
+}
+
+tsfeatures_params: Dict[str, List[str]] = {
+    "selected_features": feature_names,
 }
 
 
@@ -194,17 +213,17 @@ class testMetaLearner(TestCase):
             all_models=candidate_models,
             all_params=candidate_params,
         )
-        res = metadata.get_meta_data()
+        res = metadata.get_meta_data(**tsfeatures_params)
 
         # test meta data output
         self.assertEqual(
-            set(res.keys()),
+            set(vars(res).keys()),
             {"hpt_res", "features", "best_model", "search_method", "error_method"},
         )
 
         # test meta data output - HPT part
         self.assertEqual(
-            set(res["hpt_res"].keys()),
+            set(res.hpt_res.keys()),
             set(candidate_models.keys()),
         )
 
@@ -230,7 +249,6 @@ class testMetaLearner(TestCase):
 
 class MetaLearnModelSelectTest(TestCase):
     def test_initialize(self) -> None:
-
         self.assertRaises(ValueError, MetaLearnModelSelect, [])
 
         self.assertRaises(ValueError, MetaLearnModelSelect, [{}] * 40)
@@ -282,15 +300,19 @@ class MetaLearnModelSelectTest(TestCase):
         mlms.train(method="RandomForest")
         # Test prediction consistency
         t2_df = t2.to_dataframe().copy()
-        pred = mlms.pred(t2)
-        pred_fuzzy = mlms.pred_fuzzy(t2)
-        pred_all = mlms.pred(t2, n_top=2)
+        # pyre-ignore[6]: tsfeatures_params is not a positional arg
+        pred = mlms.pred(t2, **tsfeatures_params)
+        # pyre-ignore[6]: tsfeatures_params is not a positional arg
+        pred_fuzzy = mlms.pred_fuzzy(t2, **tsfeatures_params)
+        # pyre-ignore[6]: tsfeatures_params is not a positional arg
+        pred_all = mlms.pred(t2, n_top=2, **tsfeatures_params)
         if pred != pred_fuzzy["label"][0] or pred != pred_all[0]:
             msg = f"Prediction is not consistent! Results are: self.pred: {pred}, self.pred_fuzzy: {pred_fuzzy}, self.pred(, n_top=2): {pred_all}"
             logging.error(msg)
             raise ValueError(msg)
         # Test case for time series with nan features
-        _ = mlms.pred(t1)
+        # pyre-ignore[6]: tsfeatures_params is not a positional arg
+        _ = mlms.pred(t1, **tsfeatures_params)
         # Test pred_by_feature and its consistency
 
         feature2 = feature.copy()
@@ -309,33 +331,107 @@ class MetaLearnModelSelectTest(TestCase):
 
 class MetaLearnPredictabilityTest(TestCase):
     def test_initialize(self) -> None:
+        # Test invalid arguments for initialization (missing metadata)
         self.assertRaises(ValueError, MetaLearnPredictability)
 
+        # Test invalid arguments for initialization (dataset too small)
         self.assertRaises(ValueError, MetaLearnPredictability, metadata=[])
 
+        # Test invalid arguments for initialization (missing best hyper-params)
+        self.assertRaises(ValueError, MetaLearnPredictability, [{}] * 40)
+
+        # Test invalid arguments for initialization (missing time series features)
+        self.assertRaises(
+            ValueError,
+            MetaLearnPredictability,
+            [{"hpt_res": [None]}] * 40,
+        )
+
+        # Test invalid arguments for initialization (missing best models)
+        self.assertRaises(
+            ValueError,
+            MetaLearnPredictability,
+            [{"hpt_res": [None], "features": [None]}] * 40,
+        )
+
+        # Test reorganizing string metadata
+        self.assertTrue(
+            np.array_equal(
+                MetaLearnPredictability(METALEARNING_TEST_METADATA_STR * 20).labels,
+                [1, 0] * 20,
+            )
+        )
+
+        # Test validating data with only positive instances
+        self.assertRaises(
+            ValueError,
+            MetaLearnPredictability,
+            [METALEARNING_TEST_METADATA_STR[0]] * 40,
+        )
+
+        # Test load model method
         MetaLearnPredictability(load_model=True)
 
     def test_model(self) -> None:
         # Train a model
         mlp = MetaLearnPredictability(METALEARNING_METADATA)
         mlp.preprocess()
+
+        # Test making prediction before training
+        self.assertRaises(ValueError, mlp.pred, t2)
+        self.assertRaises(ValueError, mlp.pred_by_feature, feature)
+
+        # Test saving model before training
+        self.assertRaises(ValueError, mlp.save_model, "mlp.pkl")
+
+        # Test invalid model traininig input
+        self.assertRaises(ValueError, mlp.train, method="invalid_method")
+        self.assertRaises(ValueError, mlp.train, valid_size=2.0)
+        self.assertEqual(mlp.train(valid_size=0.5, test_size=0.6), {})
+        self.assertEqual(mlp.train(test_size=2.0), {})
+
         mlp.train()
-        # Test prediction for ts
-        t2_df = t2.to_dataframe().copy()
+
         # Test case for time series with nan features
-        ts_pred = mlp.pred(t1)
+        # pyre-ignore[6]: tsfeatures_params is not a positional arg
+        ts_pred = mlp.pred(t1, **tsfeatures_params)
         self.assertTrue(
             isinstance(ts_pred, bool),
             f"The output of MetaLearnPredictability should be a boolean but receives {type(ts_pred)}.",
         )
 
-        mlp.pred(t2)
+        # Test invalid input type for prediction by feature
+        self.assertRaises(
+            ValueError, mlp.pred_by_feature, str(METALEARNING_TEST_FEATURES)
+        )
+
+        t2_df = t2.to_dataframe().copy()
+        # pyre-ignore[6]: tsfeatures_params is not a positional arg
+        mlp.pred(t2, **tsfeatures_params)
         feature2 = feature.copy()
         mlp.pred_by_feature(feature)
         # Test if the target TimeSeriesData keeps its original value
         equals(t2.to_dataframe(), t2_df)
         # Test if the features keep their original values
         equals(feature, feature2)
+
+        # Test saving model
+        with patch(
+            "kats.models.metalearner.metalearner_predictability.joblib.dump"
+        ) as mocked_dump:
+            mlp.save_model("mlp.pkl")
+            mocked_dump.assert_called()
+
+        # Test loading model
+        mlp2 = MetaLearnPredictability(load_model=True)
+        with patch(
+            "kats.models.metalearner.metalearner_predictability.joblib.load"
+        ) as mocked_load:
+            mocked_load.side_effect = [{}, Exception]
+            mlp2.load_model("mlp.pkl")
+            mocked_load.assert_called()
+            # Test handling exceptions when loading model
+            self.assertRaises(ValueError, mlp2.load_model, "invalid.pkl")
 
 
 class MetaLearnHPTTest(TestCase):
@@ -352,7 +448,14 @@ class MetaLearnHPTTest(TestCase):
             list(feature2),
             feature3.copy(),
         )
-        for model in ["prophet", "arima", "sarima", "theta", "stlf", "holtwinters"]:
+        for model in [
+            "prophet",
+            "arima",
+            "sarima",
+            "theta",
+            "stlf",
+            "holtwinters",
+        ]:
             x, y = METALEARNING_METADATA_BY_MODEL[model]
             # Check default models initialization and training
             mlhpt = MetaLearnHPT(x, y, default_model=model)
@@ -361,8 +464,10 @@ class MetaLearnHPTTest(TestCase):
             mlhpt.build_network()
             mlhpt.train()
             # Test case for time series with nan features
-            _ = (mlhpt.pred(t1).parameters[0],)
-            _ = mlhpt.pred(t2)
+            # pyre-ignore[6]: tsfeatures_params is not a positional arg
+            _ = (mlhpt.pred(t1, **tsfeatures_params).parameters[0],)
+            # pyre-ignore[6]: tsfeatures_params is not a positional arg
+            _ = mlhpt.pred(t2, **tsfeatures_params)
             mlhpt.pred_by_feature(feature1)
             mlhpt.pred_by_feature(feature2)
             mlhpt.pred_by_feature(feature3)
@@ -391,6 +496,7 @@ class MetaLearnHPTTest(TestCase):
         # Test customized model
         mlhpt = MetaLearnHPT(x, y, ["p"], ["d", "q"])
         self.assertRaises(ValueError, mlhpt.build_network)
-        mlhpt.build_network([40], [[5]], [10, 20])
+        mlhpt.build_network([num_features], [[5]], [10, 20])
         mlhpt.train()
-        mlhpt.pred(t2)
+        # pyre-ignore[6]: tsfeatures_params is not a positional arg
+        mlhpt.pred(t2, **tsfeatures_params)
